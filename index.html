@@ -71,6 +71,14 @@ body.touch .stick,body.touch #fireBtn{display:block}
 #bossState.vent{color:#9dff7a;text-shadow:0 0 9px #6bff4a}
 #arenaT{font-size:9px;letter-spacing:.2em;color:#7f96a8;margin-top:3px}
 
+#tut{position:absolute;left:50%;transform:translateX(-50%);top:calc(96px + env(safe-area-inset-top));padding:9px 18px;background:rgba(6,14,22,.9);border:1px solid #2f5f78;border-left:3px solid #6fd7ff;border-radius:3px;text-align:center;display:none;max-width:84vw}
+#tut b{display:block;font-size:12px;letter-spacing:.16em;color:#dff0ff;font-weight:500}
+#tut small{display:block;font-size:9px;letter-spacing:.18em;color:#6f95ac;margin-top:5px}
+
+#dmgWrap{position:absolute;left:50%;top:50%;width:0;height:0;z-index:8}
+.dmg{position:absolute;left:0;top:0;width:340px;height:340px;margin:-170px 0 0 -170px;opacity:0;transition:opacity .18s;pointer-events:none}
+.dmg::before{content:'';position:absolute;left:50%;top:6px;transform:translateX(-50%);width:0;height:0;border-left:52px solid transparent;border-right:52px solid transparent;border-bottom:38px solid rgba(255,60,44,.72);filter:blur(1.5px)}
+
 #flash{position:fixed;inset:0;background:radial-gradient(ellipse at center,transparent 40%,rgba(255,40,30,.55) 100%);opacity:0;pointer-events:none;z-index:11;transition:opacity .22s}
 #vig{position:fixed;inset:0;background:radial-gradient(ellipse at center,transparent 52%,rgba(0,0,0,.6) 100%);pointer-events:none;z-index:9}
 
@@ -115,6 +123,11 @@ body.touch .stick,body.touch #fireBtn{display:block}
     <div class="wep" data-w="1">TORCH<span class="amt">melee</span></div>
     <div class="wep" data-w="2">RIFLE<span class="amt" id="rifleAmt">0</span></div>
   </div>
+  <div id="tut"></div>
+  <div id="dmgWrap">
+    <div class="dmg" id="dmg0"></div><div class="dmg" id="dmg1"></div>
+    <div class="dmg" id="dmg2"></div><div class="dmg" id="dmg3"></div>
+  </div>
   <div id="act"></div>
   <div id="lookZone"></div>
   <div class="stick" id="stickL"><i></i></div>
@@ -126,13 +139,14 @@ body.touch .stick,body.touch #fireBtn{display:block}
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 02</div>
+  <div class="sub">VERTICAL SLICE · BUILD 03</div>
   <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
   <div>
     <button class="btn" id="btnStart">BOARD SHIP</button>
     <button class="btn ghost" id="btnRand">RANDOM SHIP</button>
   </div>
+  <div><button class="btn ghost" id="btnTut">TUTORIAL: ON</button></div>
   <div class="hint">
     EVERY SHIP CODE GENERATES A DIFFERENT VESSEL<br>
     DESKTOP — CLICK TO LOCK MOUSE · WASD MOVE · MOUSE LOOK · LMB FIRE · RMB CHARGE RIFLE<br>
@@ -176,7 +190,11 @@ CW.CFG = {
   CELL_CAP: 2,            // containment cell capacity
   N0_SCRAP: 4,
   N1_SCRAP: 8, N1_MESH: 2,
-  SCRAP_SLACK: 1.7        // place this multiple of required scrap
+  SCRAP_SLACK: 1.7,       // place this multiple of required scrap
+  MEDKIT_HEAL: 34,
+  MEDKIT_PER_ROOM: 0.45,  // expected medkits per room
+  ATTACK_WINDUP: 0.5,     // s of telegraph before an enemy's first strike
+  INVULN: 0.5
 };
 
 /* ---------- RNG ---------- */
@@ -374,6 +392,23 @@ CW.generateShip = function (code) {
   var nCry = 3 + Math.floor(rnd() * 2);
   for (var c = 0; c < nCry; c++) hydro.crystals.push({ taken: false });
 
+  /* medkits: one guaranteed in the safe hub, the rest spread over reachable ground.
+     Placed AFTER locks so early medkits can never end up behind a late gate. */
+  for (var mk = 0; mk < rooms.length; mk++) rooms[mk].medkits = [];
+  rooms[0].medkits.push({ taken: false });
+  var nMed = Math.max(3, Math.round(rooms.length * CW.CFG.MEDKIT_PER_ROOM));
+  var preMed = Math.max(1, Math.round(nMed * 0.35));
+  for (var m1 = 0; m1 < preMed; m1++) {
+    var rid1 = preRooms[Math.floor(rnd() * preRooms.length)];
+    rooms[rid1].medkits.push({ taken: false });
+  }
+  for (var m2 = 0; m2 < nMed - preMed; m2++) {
+    var rid2 = midRooms[Math.floor(rnd() * midRooms.length)];
+    rooms[rid2].medkits.push({ taken: false });
+  }
+  /* the boss arena always carries one, or the encounter is unwinnable at low health */
+  reactor.medkits.push({ taken: false });
+
   /* vents: enemy spawn points, 1-3 per non-start room */
   for (var v = 1; v < rooms.length; v++) {
     var nv = 1 + Math.floor(rnd() * 3);
@@ -459,6 +494,14 @@ CW.verifyShip = function (ship) {
   var r2 = CW.reachable(rooms, ship.startRoom, { N0: true, N1: true });
   if (r2.indexOf(ship.reactorRoom) < 0) fail.push('reactor unreachable with N0+N1');
 
+  // healing must exist before the gates, and in the arena
+  var med0 = 0, med1 = 0;
+  for (var m = 0; m < r0.length; m++) med0 += (rooms[r0[m]].medkits || []).length;
+  for (var mm = 0; mm < r1.length; mm++) med1 += (rooms[r1[mm]].medkits || []).length;
+  if (med0 < 1) fail.push('no medkit reachable with no keys');
+  if (med1 < 2) fail.push('only ' + med1 + ' medkits before the boss gate');
+  if (!(rooms[ship.reactorRoom].medkits || []).length) fail.push('no medkit in the boss arena');
+
   // the boss must not be trivially reachable before its gate
   if (r1.indexOf(ship.reactorRoom) >= 0) fail.push('reactor reachable before N1 — gate bypassed');
 
@@ -490,7 +533,37 @@ CW.stepCrystals = function (list, dt, cellCap) {
   return { crystals: out, shattered: shattered };
 };
 
-/* ---------- BOSS FSM (shared by all three bosses) ---------- */
+/* ---------- INFESTATION PACING ----------
+   The ship is dormant while the player is still learning the controls, then the
+   hive wakes in stages. Each stage tightens the spawn interval, widens the
+   roster, and raises the concurrent cap. */
+CW.PHASE_NAMES = ['DORMANT', 'WAKING', 'ACTIVE', 'FLOOD'];
+
+CW.phaseFor = function (st) {
+  st = st || {};
+  if (!st.N0) return 0;      // tutorial: nothing spawns at all
+  if (!st.N1) return 1;      // skitters trickle in
+  if (!st.hotEver) return 2; // full roster once the scrubber is up
+  return 3;                  // pulling voidglass brings the hive down on you
+};
+
+CW.enemyCap = function (phase) { return [0, 6, 13, 20][phase] || 0; };
+
+CW.spawnInterval = function (phase, alert, elapsed) {
+  if (phase <= 0) return Infinity;
+  var base = [Infinity, 5.6, 3.4, 2.3][phase];
+  /* slow global ramp so a long session keeps tightening, floored so it never
+     becomes unsurvivable */
+  var ramp = Math.max(0.55, 1 - Math.min(elapsed || 0, 480) / 900);
+  return base * ramp / CW.spawnMult(alert || 0);
+};
+
+CW.rollEnemy = function (phase, alert, roll) {
+  if (phase <= 1) return 'skitter';
+  if (phase === 2) return roll < 0.58 ? 'skitter' : (roll < 0.84 ? 'clinger' : 'bloater');
+  if (alert >= 2 && roll < 0.15) return 'stalker';
+  return roll < 0.45 ? 'skitter' : (roll < 0.72 ? 'clinger' : 'bloater');
+};
 CW.BOSS_STATES = ['DORMANT', 'AGGRESSIVE', 'ARMORED', 'VENT', 'STAGGER', 'DEAD', 'FLED'];
 
 CW.newBoss = function (cfg) {
@@ -587,7 +660,7 @@ var ship, world, colliders = [], roomGroups = [], doors = [], pickups = [], node
 var lightAnchors = [], lightPool = [], headLamp = null;
 var player, boss = null, bossMesh = null, bossGroup = null;
 var enemies = [], projectiles = [], beams = [], particles = [], tracers = [];
-var running = false, ended = false, firstPerson = true;
+var running = false, ended = false, firstPerson = true, tutorialEnabled = true;
 var viewGun = null, tpRig = null;
 
 var S = {
@@ -595,8 +668,11 @@ var S = {
   crystals: [], charges: 0, keys: {}, wep: 0,
   alert: 0, room: 0, invuln: 0, shake: 0, bob: 0,
   charging: 0, cool: 0, spawnT: 0, part: false, powerT1: false,
-  yaw: 0, pitch: 0, recoil: 0, kick: 0
+  yaw: 0, pitch: 0, recoil: 0, kick: 0,
+  elapsed: 0, phase: 0, hotEver: false, tut: 0, tutOn: true,
+  tutMove: 0, tutLook: 0, tutShots: 0, chitter: 0
 };
+var targets = [], dmgMarks = [];
 
 /* ================= AUDIO ================= */
 var AC = null, master = null;
@@ -645,7 +721,13 @@ var SFX = {
   boss: function () { blip(52, 1.7, 'sawtooth', 0.34, 26); noise(1.2, 0.22, 170); },
   vent: function () { blip(780, 0.5, 'sine', 0.18, 1540); },
   die: function () { blip(380, 0.6, 'sawtooth', 0.18, 40); noise(0.5, 0.18, 320); },
-  power: function () { [0, 160, 320, 520].forEach(function (d, i) { setTimeout(function () { blip(220 * (i + 1), 0.4, 'sine', 0.15, 330 * (i + 1)); }, d); }); }
+  power: function () { [0, 160, 320, 520].forEach(function (d, i) { setTimeout(function () { blip(220 * (i + 1), 0.4, 'sine', 0.15, 330 * (i + 1)); }, d); }); },
+  tell: function (v) { blip(430, 0.16, 'sawtooth', 0.1 * (v || 1), 760); noise(0.1, 0.07 * (v || 1), 3100, 3); },
+  chitter: function (v) { noise(0.09, 0.055 * (v || 1), 2700, 5); blip(1150, 0.05, 'square', 0.035 * (v || 1), 1500); },
+  heal: function () { blip(520, 0.13, 'sine', 0.13, 780); setTimeout(function () { blip(780, 0.26, 'sine', 0.12, 1050); }, 110); },
+  ping: function () { blip(1050, 0.09, 'sine', 0.1, 1450); },
+  wake: function () { blip(44, 1.6, 'sawtooth', 0.3, 22); noise(1.3, 0.2, 150); setTimeout(function () { blip(150, 0.7, 'square', 0.14, 60); }, 260); },
+  breakit: function () { noise(0.26, 0.2, 1500, 1.2); blip(300, 0.2, 'square', 0.1, 90); }
 };
 
 /* ================= MATERIALS ================= */
@@ -828,7 +910,7 @@ function dirOf(a, b) { return { x: b.gx - a.gx, z: b.gy - a.gy }; }
 
 function buildWorld() {
   world = new THREE.Group(); scene.add(world);
-  colliders = []; roomGroups = []; doors = []; pickups = []; nodeObjs = []; lightAnchors = [];
+  colliders = []; roomGroups = []; doors = []; pickups = []; nodeObjs = []; lightAnchors = []; targets = [];
   var built = {};
   var rnd = CW.rng(CW.hash(ship.code + 'geo'));
 
@@ -848,6 +930,10 @@ function buildWorld() {
     for (var cr = 0; cr < R.crystals.length; cr++) {
       var qx = R.cx + (rnd() - 0.5) * (R.w - 6), qz = R.cz + (rnd() - 0.5) * (R.d - 6);
       buildPickup(G, 'crystal', qx, qz);
+    }
+    for (var mk = 0; mk < (R.medkits || []).length; mk++) {
+      var mx = R.cx + (rnd() - 0.5) * (R.w - 7), mz = R.cz + (rnd() - 0.5) * (R.d - 7);
+      buildPickup(G, 'medkit', mx, mz);
     }
     if (R.role === 'CRYOBAY') buildBench(G, R);
     for (var l2 = 0; l2 < R.links.length; l2++) {
@@ -1323,6 +1409,22 @@ function buildBench(G, R) {
   addBox(bx - 2.2, bx + 2.2, bz - 1.1, bz + 1.1, 1.8);
   pickups.push({ kind: 'bench', x: bx, z: bz + 2.4, g: g, coil: coil, r: 3.4, room: R.id });
   lightAnchors.push({ x: bx, y: 3.0, z: bz, color: 0x7a5cff, base: 1.2 });
+
+  /* practice canister: gives the tutorial's fire step something to hit */
+  var tx = R.cx + R.w / 2 - 4.2, tz = R.cz;
+  var tg = new THREE.Group();
+  var can = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 1.9, 10), toon(0xb8912f, 0xffd08a, 0.35));
+  can.position.y = 1.5; tg.add(can);
+  var stand = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.42, 0.6, 7), MAT.strut);
+  stand.position.y = 0.3; tg.add(stand);
+  for (var rr = 0; rr < 2; rr++) {
+    var bnd = new THREE.Mesh(new THREE.TorusGeometry(0.66, 0.07, 5, 12), MAT.bolt);
+    bnd.position.y = 1.05 + rr * 0.9; bnd.rotation.x = Math.PI / 2; tg.add(bnd);
+  }
+  tg.position.set(tx, 0, tz); G.add(tg);
+  addBox(tx - 0.7, tx + 0.7, tz - 0.7, tz + 0.7, 2.5);
+  targets.push({ x: tx, y: 1.5, z: tz, r: 0.95, hp: 36, g: tg, can: can, dead: false });
+  lightAnchors.push({ x: tx, y: 2.6, z: tz, color: 0xffd08a, base: 0.5 });
 }
 
 function buildNode(G, R, node, sec) {
@@ -1353,12 +1455,26 @@ function buildPickup(G, type, x, z) {
     var pod = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 0.35, 6), MAT.hullDark);
     pod.position.y = 0.17; g.add(pod);
     lightAnchors.push({ x: x, y: 1.1, z: z, color: 0x8fff7a, base: 0.9, pickIdx: pickups.length });
+  } else if (type === 'medkit') {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.5, 0.5), toon(0xe8eef2, 0x9fb4c4, 0.3));
+    var cx1 = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.14, 0.02), basic(0x4dff8a));
+    cx1.position.set(0, 0, 0.26); g.add(cx1);
+    var cx2 = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.34, 0.02), basic(0x4dff8a));
+    cx2.position.set(0, 0, 0.26); g.add(cx2);
+    var handle = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.04, 5, 9), MAT.bolt);
+    handle.position.set(0, 0.3, 0); handle.rotation.x = Math.PI / 2; g.add(handle);
+    g.add(cx1); g.add(cx2);
+    lightAnchors.push({ x: x, y: 1.0, z: z, color: 0x4dff8a, base: 0.55, pickIdx: pickups.length });
   } else if (type === 'mesh') {
     mesh = new THREE.Mesh(new THREE.TorusGeometry(0.46, 0.15, 6, 10), toon(0x9fd8ff, 0x4ad4ff, 0.6));
   } else {
     mesh = new THREE.Mesh(new THREE.BoxGeometry(0.58, 0.58, 0.58), toon(0xd9b071, 0xffd08a, 0.4));
   }
-  mesh.position.y = type === 'crystal' ? 1.05 : 0.85; g.add(mesh);
+  mesh.position.y = type === 'crystal' ? 1.05 : 0.85;
+  if (type === 'medkit') {
+    for (var ci = g.children.length - 1; ci >= 0; ci--) { var ch = g.children[ci]; g.remove(ch); mesh.add(ch); }
+  }
+  g.add(mesh);
   g.position.set(x, 0, z); G.add(g);
   pickups.push({ kind: type, x: x, z: z, g: g, mesh: mesh, taken: false, r: type === 'crystal' ? 2.2 : 1.9 });
 }
@@ -1502,13 +1618,13 @@ function spawnEnemy(kind, x, z) {
     g.add(leg); legs.push({ m: leg, a: a });
   }
   g.position.set(x, 0, z); world.add(g);
-  enemies.push({ kind: kind, T: T, hp: T.hp, g: g, pos: { x: x, z: z }, cd: 0, wob: Math.random() * 9, flash: 0, body: body, legs: legs });
+  enemies.push({ kind: kind, T: T, hp: T.hp, g: g, pos: { x: x, z: z }, cd: 0, wind: 0, lunge: 0, wob: Math.random() * 9, flash: 0, body: body, legs: legs });
 }
 function killEnemy(e, i) {
   for (var p = 0; p < 7; p++) burst(e.pos.x, e.T.hy, e.pos.z, e.T.color);
   if (e.T.boom) {
     var d = Math.hypot(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
-    if (d < 4.4) hurtPlayer(e.T.dmg * (1 - d / 4.4));
+    if (d < 4.4) hurtPlayer(e.T.dmg * (1 - d / 4.4), e.pos.x, e.pos.z);
     for (var b = 0; b < 14; b++) burst(e.pos.x, 1.2, e.pos.z, 0xffcc44);
     noise(0.42, 0.24, 250);
   }
@@ -1556,6 +1672,13 @@ function hitscan(dmg, spreadDeg) {
     var t = raySphere(o.x, o.y, o.z, dx, dy, dz, e.pos.x, e.T.hy, e.pos.z, e.T.r * 1.5);
     if (t >= 0 && t < bestT) { bestT = t; bestE = i; }
   }
+  var bestT2 = -1;
+  for (var g2 = 0; g2 < targets.length; g2++) {
+    var TG = targets[g2];
+    if (TG.dead) continue;
+    var tt = raySphere(o.x, o.y, o.z, dx, dy, dz, TG.x, TG.y, TG.z, TG.r * 1.3);
+    if (tt >= 0 && tt < bestT) { bestT = tt; bestE = -3; bestT2 = g2; }
+  }
   var bossT = -1;
   if (boss && bossMesh && boss.state !== 'DEAD') {
     bossT = raySphere(o.x, o.y, o.z, dx, dy, dz, bossMesh.x, 2.8, bossMesh.z, bossMesh.r);
@@ -1572,6 +1695,15 @@ function hitscan(dmg, spreadDeg) {
     boss._dmg = (boss._dmg || 0) + dmg;
     burst(bossMesh.x + (Math.random() - .5) * 4, 3, bossMesh.z + (Math.random() - .5) * 4, 0xff8866);
     SFX.hit();
+  } else if (bestE === -3) {
+    var TT = targets[bestT2];
+    TT.hp -= dmg; SFX.hit();
+    burst(TT.x, TT.y, TT.z, 0xffd08a);
+    TT.can.material.emissiveIntensity = 1.4;
+    if (TT.hp <= 0 && !TT.dead) {
+      TT.dead = true; TT.g.visible = false; SFX.breakit();
+      for (var bq = 0; bq < 12; bq++) burst(TT.x, TT.y, TT.z, 0xffd08a);
+    }
   } else {
     burst(o.x + dx * bestT, o.y + dy * bestT, o.z + dz * bestT, 0x9fb4c4);
   }
@@ -1608,12 +1740,29 @@ function toast(msg) {
   var t = $('toast'); t.textContent = msg; t.style.opacity = 1;
   clearTimeout(t._h); t._h = setTimeout(function () { t.style.opacity = 0; }, 2300);
 }
-function hurtPlayer(dmg) {
+function hurtPlayer(dmg, sx, sz) {
   if (S.invuln > 0 || ended) return;
-  S.hp -= dmg; S.invuln = 0.42; S.shake = Math.min(1, dmg / 22);
+  S.hp -= dmg; S.invuln = CFG.INVULN; S.shake = Math.min(1, dmg / 22);
   $('flash').style.opacity = Math.min(0.95, dmg / 26); SFX.hurt();
   setTimeout(function () { $('flash').style.opacity = 0; }, 130);
+  /* directional hit marker: without this, being eaten from behind reads as
+     random damage with no way to learn from it */
+  if (sx !== undefined && sz !== undefined) {
+    var rel = Math.atan2(sx - player.pos.x, sz - player.pos.z) - (S.yaw + Math.PI);
+    while (rel > Math.PI) rel -= Math.PI * 2;
+    while (rel < -Math.PI) rel += Math.PI * 2;
+    showDamageDir(rel);
+  }
   if (S.hp <= 0) { S.hp = 0; endGame(false, 'HULL BREACH', 'Your suit failed in the dark. The ship keeps drifting.'); }
+}
+function showDamageDir(rel) {
+  var el = null;
+  for (var i = 0; i < dmgMarks.length; i++) if (dmgMarks[i].t > 1.1) { el = dmgMarks[i]; break; }
+  if (!el) { if (dmgMarks.length >= 4) el = dmgMarks[0]; else { el = { d: $('dmg' + dmgMarks.length), t: 9 }; dmgMarks.push(el); } }
+  if (!el.d) return;
+  el.t = 0;
+  el.d.style.transform = 'translate(-50%,-50%) rotate(' + (-rel * 180 / Math.PI) + 'deg)';
+  el.d.style.opacity = '1';
 }
 function roomAt(x, z) {
   for (var i = 0; i < ship.rooms.length; i++) {
@@ -1804,7 +1953,7 @@ function doInteract() {
   }
   if (o.kind === 'crystal') {
     o.taken = true; o.g.visible = false;
-    S.crystals.push({ t: 0 });
+    S.crystals.push({ t: 0 }); S.hotEver = true;
     SFX.crystal();
     var was = S.alert; S.alert = CW.alertFromHot(hotCount());
     toast('VOIDGLASS EXTRACTED' + (hotCount() > 0 ? ' — IT IS HOT. THE HIVE CAN SMELL IT.' : ''));
@@ -1831,11 +1980,22 @@ function openDoors() {
 
 /* ================= SPAWNING ================= */
 function spawnTick(dt) {
+  S.elapsed += dt;
+  var phase = CW.phaseFor({ N0: !!S.keys.N0, N1: !!S.keys.N1, hotEver: S.hotEver });
+  if (phase !== S.phase) {
+    var up = phase > S.phase;
+    S.phase = phase;
+    if (up && phase === 1) { SFX.wake(); toast('SOMETHING IN THE WALLS HEARD THAT'); }
+    if (up && phase === 2) { SFX.wake(); toast('THE HIVE IS AWAKE — MOVEMENT ON EVERY DECK'); }
+    if (up && phase === 3) { SFX.wake(); toast('THEY CAN SMELL THE VOIDGLASS. THEY ARE FLOODING IN.'); }
+  }
+  var cap = Math.min(ENEMY_CAP, CW.enemyCap(phase));
+  if (enemies.length >= cap) { S.spawnT = Math.max(S.spawnT, 0.6); return; }
+  var iv = CW.spawnInterval(phase, S.alert, S.elapsed);
+  if (!isFinite(iv)) { S.spawnT = 1; return; }
   S.spawnT -= dt;
   if (S.spawnT > 0) return;
-  var mult = CW.spawnMult(S.alert);
-  S.spawnT = (2.9 / mult) * (0.7 + Math.random() * 0.6);
-  if (enemies.length >= ENEMY_CAP) return;
+  S.spawnT = iv * (0.75 + Math.random() * 0.5);
   var pool = ship.pvs[S.room] || [S.room], cand = [];
   for (var i = 0; i < pool.length; i++) {
     var R = ship.rooms[pool[i]];
@@ -1847,12 +2007,29 @@ function spawnTick(dt) {
   }
   if (!cand.length) return;
   var p = cand[Math.floor(Math.random() * cand.length)];
-  var roll = Math.random(), kind;
-  if (S.alert >= 2 && roll < 0.14) kind = 'stalker';
-  else if (roll < 0.5) kind = 'skitter';
-  else if (roll < 0.78) kind = 'clinger';
-  else kind = 'bloater';
-  spawnEnemy(kind, p.x, p.z);
+  spawnEnemy(CW.rollEnemy(phase, S.alert, Math.random()), p.x, p.z);
+}
+
+/* ================= TUTORIAL ================= */
+var TUT = [
+  { t: 'MOVE', s: function () { return isTouch ? 'LEFT STICK' : 'W A S D'; }, ok: function () { return S.tutMove > 4; } },
+  { t: 'LOOK AROUND', s: function () { return isTouch ? 'DRAG ANYWHERE' : 'MOVE THE MOUSE'; }, ok: function () { return S.tutLook > 2.2; } },
+  { t: 'DESTROY THE TEST CANISTER', s: function () { return isTouch ? 'FIRE BUTTON' : 'LEFT MOUSE BUTTON'; }, ok: function () { return targets.length === 0 || targets[0].dead; } },
+  { t: 'COLLECT SALVAGE', s: function () { return 'WALK OVER SCRAP TO PICK IT UP  ·  ' + S.scrap + '/' + CFG.N0_SCRAP; }, ok: function () { return S.scrap >= CFG.N0_SCRAP; } },
+  { t: 'REPAIR THE LIGHTING NODE', s: function () { return isTouch ? 'TAP THE PROMPT' : 'PRESS E AT THE PROMPT'; }, ok: function () { return !!S.keys.N0; } }
+];
+function updateTutorial(dt, moved, looked) {
+  var el = $('tut');
+  if (!S.tutOn || S.tut >= TUT.length) { el.style.display = 'none'; return; }
+  S.tutMove += moved; S.tutLook += looked;
+  var step = TUT[S.tut];
+  if (step.ok()) {
+    S.tut++; SFX.ping();
+    if (S.tut >= TUT.length) { el.style.display = 'none'; return; }
+    step = TUT[S.tut];
+  }
+  el.style.display = 'block';
+  el.innerHTML = '<b>' + (S.tut + 1) + '/' + TUT.length + '  ' + step.t + '</b><small>' + step.s() + '</small>';
 }
 
 /* ================= UPDATE ================= */
@@ -1902,7 +2079,7 @@ function update(dt) {
     } else S._chgDone = false;
   } else if (firing && S.cool <= 0) {
     if (S.wep === 0) {
-      S.cool = 0.14; SFX.shot(); S.recoil = 1; S.kick = 0.06;
+      S.cool = 0.14; SFX.shot(); S.recoil = 1; S.kick = 0.06; S.tutShots++;
       S.pitch += 0.006 + Math.random() * 0.004; clampPitch();
       hitscan(13, 1.6);
     } else {
@@ -1928,7 +2105,7 @@ function update(dt) {
       !!hitsWall(P.m.position.x, P.m.position.z, 0.2);
     if (!dead) {
       var ddx = P.m.position.x - player.pos.x, ddy = P.m.position.y - (EYE - 0.4), ddz = P.m.position.z - player.pos.z;
-      if (Math.hypot(ddx, ddz) < PLR_R + 0.4 && Math.abs(ddy) < 1.3) { hurtPlayer(P.dmg); dead = true; }
+      if (Math.hypot(ddx, ddz) < PLR_R + 0.4 && Math.abs(ddy) < 1.3) { hurtPlayer(P.dmg, P.m.position.x, P.m.position.z); dead = true; }
     }
     if (dead) { world.remove(P.m); projectiles.splice(p, 1); }
   }
@@ -1953,7 +2130,6 @@ function update(dt) {
   for (var n = enemies.length - 1; n >= 0; n--) {
     var EN = enemies[n];
     EN.wob += dt * 11; EN.cd -= dt;
-    EN.body.material.emissiveIntensity = EN.flash > 0 ? 1.5 : 0.26;
     if (EN.flash > 0) EN.flash -= dt;
     var tx = player.pos.x - EN.pos.x, tz = player.pos.z - EN.pos.z, td = Math.hypot(tx, tz);
     if (td > 74) { world.remove(EN.g); enemies.splice(n, 1); continue; }
@@ -1968,13 +2144,42 @@ function update(dt) {
       for (var lgi = 0; lgi < EN.legs.length; lgi++) {
         EN.legs[lgi].m.rotation.y = Math.sin(EN.wob * 1.6 + EN.legs[lgi].a * 2) * 0.36;
       }
-    } else if (EN.cd <= 0) {
-      EN.cd = EN.T.atk;
-      if (EN.T.boom) { EN.hp = 0; killEnemy(EN, n); continue; }
-      hurtPlayer(EN.T.dmg);
+    } else {
+      /* Telegraphed strike. Instant contact damage is what made these things feel
+         like they killed you out of nowhere from behind — now every hit has a
+         wind-up with a sound and a visible rear-up you can react to. */
+      if (EN.wind > 0) {
+        EN.wind -= dt;
+        if (EN.wind <= 0) {
+          EN.wind = 0; EN.cd = EN.T.atk;
+          if (EN.T.boom) { EN.hp = 0; killEnemy(EN, n); continue; }
+          var stillClose = Math.hypot(player.pos.x - EN.pos.x, player.pos.z - EN.pos.z) <= EN.T.range + 0.7;
+          if (stillClose) hurtPlayer(EN.T.dmg, EN.pos.x, EN.pos.z);
+          EN.lunge = 0.18;
+        }
+      } else if (EN.cd <= 0) {
+        EN.wind = CFG.ATTACK_WINDUP;
+        SFX.tell(Math.max(0.35, 1 - td / 9));
+      }
     }
-    EN.g.position.set(EN.pos.x, Math.abs(Math.sin(EN.wob)) * 0.14, EN.pos.z);
+    if (EN.lunge > 0) EN.lunge -= dt;
+    /* rear-up during wind-up, lunge on release */
+    var rear = EN.wind > 0 ? (1 - EN.wind / CFG.ATTACK_WINDUP) : 0;
+    EN.body.material.emissiveIntensity = EN.flash > 0 ? 1.5 : (0.26 + rear * 0.9);
+    EN.g.position.set(EN.pos.x, Math.abs(Math.sin(EN.wob)) * 0.14 + rear * 0.42 + (EN.lunge > 0 ? -0.2 : 0), EN.pos.z);
+    EN.g.rotation.x = -rear * 0.42 + (EN.lunge > 0 ? 0.3 : 0);
     EN.g.rotation.y = Math.atan2(tx, tz);
+    EN.g.scale.setScalar(1 + rear * 0.16);
+
+    /* something closing from behind chitters, so you get a warning before the bite */
+    if (td < 11) {
+      var toE = { x: -tx / td, z: -tz / td };
+      var fdot = toE.x * fx + toE.z * fz;
+      if (fdot < 0.1) {
+        S.chitter -= dt;
+        if (S.chitter <= 0) { S.chitter = 0.5 + Math.random() * 0.8; SFX.chitter(Math.max(0.3, 1 - td / 11)); }
+      }
+    }
   }
 
   /* --- pickups --- */
@@ -1985,7 +2190,19 @@ function update(dt) {
     K.mesh.rotation.y += dt * 2.1;
     K.mesh.position.y = (K.kind === 'crystal' ? 1.05 : 0.85) + Math.sin(performance.now() / 380 + pk) * 0.14;
     if (K.kind === 'crystal') continue;
-    if (Math.hypot(player.pos.x - K.x, player.pos.z - K.z) < 1.9) {
+    var near = Math.hypot(player.pos.x - K.x, player.pos.z - K.z) < 1.9;
+    if (K.kind === 'medkit') {
+      /* left in place at full health so it is banked, not wasted */
+      if (near && S.hp < CFG.PLAYER_HP) {
+        K.taken = true; K.g.visible = false;
+        S.hp = Math.min(CFG.PLAYER_HP, S.hp + CFG.MEDKIT_HEAL);
+        SFX.heal(); toast('MEDKIT — +' + CFG.MEDKIT_HEAL + ' INTEGRITY');
+      } else if (near && !K._full) {
+        K._full = true; toast('MEDKIT LEFT IN PLACE — ALREADY AT FULL INTEGRITY');
+      } else if (!near) K._full = false;
+      continue;
+    }
+    if (near) {
       K.taken = true; K.g.visible = false;
       if (K.kind === 'mesh') S.mesh++; else S.scrap++;
       SFX.pick();
@@ -2009,6 +2226,20 @@ function update(dt) {
   S.invuln -= dt;
   var ra = roomAt(player.pos.x, player.pos.z);
   if (ra >= 0) S.room = ra;
+
+  var movedDist = Math.hypot(player.pos.x - (S._px === undefined ? player.pos.x : S._px),
+                             player.pos.z - (S._pz === undefined ? player.pos.z : S._pz));
+  S._px = player.pos.x; S._pz = player.pos.z;
+  var lookDelta = Math.abs(S.yaw - (S._ly === undefined ? S.yaw : S._ly));
+  S._ly = S.yaw;
+  updateTutorial(dt, movedDist, Math.min(lookDelta, 0.4));
+
+  /* fade the directional damage markers */
+  for (var dm = 0; dm < dmgMarks.length; dm++) {
+    var M = dmgMarks[dm];
+    M.t += dt;
+    if (M.d) M.d.style.opacity = String(Math.max(0, 1 - M.t / 1.1));
+  }
 
   spawnTick(dt);
   updateBoss(dt);
@@ -2074,7 +2305,7 @@ function updateBoss(dt) {
   if (boss._add <= 0) {
     boss._add = 3.4;
     var R2 = ship.rooms[ship.reactorRoom];
-    if (R2.vpos && R2.vpos.length && enemies.length < ENEMY_CAP - 3) {
+    if (R2.vpos && R2.vpos.length && enemies.length < Math.min(ENEMY_CAP, CW.enemyCap(S.phase)) - 2) {
       var v = R2.vpos[Math.floor(Math.random() * R2.vpos.length)];
       spawnEnemy('skitter', v.x, v.z);
     }
@@ -2144,7 +2375,8 @@ function updateHUD() {
   $('alert').style.color = S.alert >= 2 ? '#ff8a4a' : '#5f7f96';
 
   var R = ship.rooms[S.room];
-  $('sector').textContent = R ? (CW.SECTORS[R.role] || CW.SECTORS.SPINE).name.toUpperCase() : '';
+  $('sector').textContent = (R ? (CW.SECTORS[R.role] || CW.SECTORS.SPINE).name.toUpperCase() : '') +
+    '   ·   HIVE ' + CW.PHASE_NAMES[S.phase];
   $('obj').textContent = objective();
 
   /* crosshair turns hostile when something is under it */
@@ -2200,8 +2432,12 @@ function startGame(code) {
   S = {
     hp: CFG.PLAYER_HP, o2: CFG.O2_MAX, scrap: 0, mesh: 0, crystals: [], charges: 0,
     keys: {}, wep: 0, alert: 0, room: 0, invuln: 0, shake: 0, bob: 0, charging: 0, cool: 0,
-    spawnT: 2, part: false, powerT1: false, yaw: 0, pitch: 0, recoil: 0, kick: 0
+    spawnT: 2, part: false, powerT1: false, yaw: 0, pitch: 0, recoil: 0, kick: 0,
+    elapsed: 0, phase: 0, hotEver: false, tut: 0, tutOn: tutorialEnabled,
+    tutMove: 0, tutLook: 0, tutShots: 0, chitter: 0
   };
+  dmgMarks = [];
+  for (var dq = 0; dq < 4; dq++) { var dd = $('dmg' + dq); if (dd) dd.style.opacity = '0'; }
   boss = null; bossMesh = null; bossGroup = null; ended = false; firing = false; charging = false;
 
   scene = new THREE.Scene();
@@ -2263,6 +2499,10 @@ function init() {
     startGame(CW.makeCode(r));
   });
   $('btnSame').addEventListener('click', function () { startGame(ship.code); });
+  $('btnTut').addEventListener('click', function () {
+    tutorialEnabled = !tutorialEnabled;
+    $('btnTut').textContent = tutorialEnabled ? 'TUTORIAL: ON' : 'TUTORIAL: OFF';
+  });
 
   $('loading').style.display = 'none';
   loop();
@@ -2274,6 +2514,7 @@ window.__CW = {
   get ship() { return ship; }, get enemies() { return enemies; }, get colliders() { return colliders; },
   get pickups() { return pickups; }, get nodes() { return nodeObjs; }, get ended() { return ended; },
   get camera() { return camera; }, get firstPerson() { return firstPerson; },
+  get targets() { return targets; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
   hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, rayWorld: rayWorld, PLR_R: PLR_R,
   start: function (c) { startGame(c); }, hurt: function (d) { hurtPlayer(d); },
   give: function (k, n) { S[k] = n; }, setKey: function (k) { S.keys[k] = true; openDoors(); },
