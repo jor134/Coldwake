@@ -139,7 +139,7 @@ body.touch .stick,body.touch #fireBtn{display:block}
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 04</div>
+  <div class="sub">VERTICAL SLICE · BUILD 05</div>
   <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
   <div>
@@ -788,6 +788,13 @@ function initGeo() {
   GEO.tubeRib = new THREE.TorusGeometry(1, 0.05, 6, 22);
   GEO.arcPanel = new THREE.CylinderGeometry(1, 1, 1, 5, 1, true, 0, 0.30);
   GEO.arcPipe = new THREE.TorusGeometry(1, 0.02, 5, 26, 0.55);
+  /* insect parts — deliberately low segment counts, these get drawn 20x over */
+  GEO.legSeg = new THREE.CylinderGeometry(0.55, 1, 1, 5);
+  GEO.chitin = new THREE.SphereGeometry(1, 7, 5);
+  GEO.spine = new THREE.ConeGeometry(1, 1, 4);
+  GEO.mand = new THREE.ConeGeometry(1, 1, 5);
+  GEO.eyeball = new THREE.SphereGeometry(1, 5, 4);
+  GEO.antenna = new THREE.CylinderGeometry(0.25, 1, 1, 4);
 }
 /* uniform point inside a room's circular footprint */
 function polarIn(R, rnd, frac) {
@@ -1672,40 +1679,222 @@ function buildPlayer(R) {
 
 /* ================= ENEMIES ================= */
 var ETYPE = {
-  skitter: { hp: 20, spd: 7.4, r: 0.6, dmg: 7, color: 0x8a4a5c, atk: 0.75, range: 1.6, hy: 0.7 },
-  clinger: { hp: 32, spd: 6.0, r: 0.7, dmg: 11, color: 0x6a4a8a, atk: 1.1, range: 1.8, hy: 0.85 },
-  bloater: { hp: 44, spd: 3.2, r: 1.0, dmg: 26, color: 0x7a7a3a, atk: 0.1, range: 2.6, boom: true, hy: 1.1 },
-  stalker: { hp: 120, spd: 8.2, r: 0.88, dmg: 16, color: 0xb03a2a, atk: 0.85, range: 2.1, hy: 1.15 }
+  skitter: {
+    hp: 20, spd: 7.4, r: 0.6, dmg: 7, color: 0x7d3f4e, atk: 0.75, range: 1.6, hy: 0.7,
+    A: { thorax: [0.52, 0.40, 0.80], head: 0.30, abd: [0.48, 0.42, 0.70], abdOff: -0.92, abdRise: 0.30,
+         hipR: 0.42, footR: 1.55, femur: 0.86, tibia: 0.92, knee: 0.78, legR: 0.055,
+         mand: 0.36, eyes: 4, eyeR: 0.072, spines: 3, spineL: 0.22, ant: 0.62, gait: 1.55,
+         ride: 0.52, eye: 0xff4a3a, gloss: 0x2a1016 }
+  },
+  clinger: {
+    hp: 32, spd: 6.0, r: 0.7, dmg: 11, color: 0x5d3f7d, atk: 1.1, range: 1.8, hy: 0.85,
+    A: { thorax: [0.76, 0.34, 0.72], head: 0.26, abd: [0.72, 0.52, 0.66], abdOff: -0.80, abdRise: 0.52,
+         hipR: 0.54, footR: 1.72, femur: 0.94, tibia: 0.86, knee: 1.05, legR: 0.062,
+         mand: 0.30, eyes: 6, eyeR: 0.062, spines: 5, spineL: 0.30, ant: 0.40, gait: 1.35,
+         ride: 0.46, eye: 0xc06aff, gloss: 0x1c1030 }
+  },
+  bloater: {
+    hp: 44, spd: 3.2, r: 1.0, dmg: 26, color: 0x6d6d33, atk: 0.1, range: 2.6, boom: true, hy: 1.1,
+    A: { thorax: [0.74, 0.62, 0.82], head: 0.34, abd: [1.28, 1.22, 1.34], abdOff: -1.15, abdRise: 0.62,
+         hipR: 0.56, footR: 1.42, femur: 0.62, tibia: 0.70, knee: 0.52, legR: 0.085,
+         mand: 0.28, eyes: 3, eyeR: 0.085, spines: 6, spineL: 0.26, ant: 0.30, gait: 0.85,
+         ride: 0.70, eye: 0xffe14a, gloss: 0x24240c, sac: true }
+  },
+  stalker: {
+    hp: 120, spd: 8.2, r: 0.88, dmg: 16, color: 0x9c2f22, atk: 0.85, range: 2.1, hy: 1.15,
+    A: { thorax: [0.78, 0.66, 1.10], head: 0.40, abd: [0.74, 0.68, 1.15], abdOff: -1.35, abdRise: 0.86,
+         hipR: 0.62, footR: 2.15, femur: 1.24, tibia: 1.30, knee: 1.24, legR: 0.075,
+         mand: 0.74, eyes: 6, eyeR: 0.082, spines: 7, spineL: 0.46, ant: 0.95, gait: 1.45,
+         ride: 0.92, eye: 0xffc21a, gloss: 0x2a0a06 }
+  }
 };
+/* legs attach along the thorax the way a real hexapod's do: fore, mid, hind pairs */
+var LEG_ANGLES = [0.62, Math.PI / 2, 2.52, -0.62, -Math.PI / 2, -2.52];
+var TRIPOD = [0, 1, 0, 1, 0, 1];   /* alternating tripod gait */
 function spawnEnemy(kind, x, z) {
   if (enemies.length >= ENEMY_CAP) return;
-  var T = ETYPE[kind];
+  var T = ETYPE[kind], A = T.A;
   var sp = { x: x, z: z };
   resolve(sp, T.r);
   if (hitsWall(sp.x, sp.z, T.r * 0.9)) return;
   x = sp.x; z = sp.z;
+
+  var sc = T.r;                       /* every dimension scales off the body radius */
   var g = new THREE.Group();
-  var body = new THREE.Mesh(new THREE.SphereGeometry(T.r * 1.12, 10, 8), toon(T.color, T.color, 0.26));
-  body.scale.y = 0.84; body.position.y = T.hy; g.add(body);
-  var carap = new THREE.Mesh(new THREE.SphereGeometry(T.r * 0.95, 9, 6, 0, Math.PI * 2, 0, Math.PI / 2), toon(0x241a20, T.color, 0.14));
-  carap.position.y = T.hy + T.r * 0.28; g.add(carap);
-  var eye = new THREE.Mesh(new THREE.SphereGeometry(T.r * 0.26, 7, 6), basic(kind === 'stalker' ? 0xffdd33 : 0xff5544));
-  eye.position.set(0, T.hy + T.r * 0.2, T.r * 0.98); g.add(eye);
-  var mand = new THREE.Mesh(new THREE.ConeGeometry(T.r * 0.3, T.r * 0.8, 5), toon(0x1a1216));
-  mand.rotation.x = Math.PI / 2; mand.position.set(0, T.hy - T.r * 0.25, T.r * 1.0); g.add(mand);
-  var legs = [];
-  for (var L = 0; L < 6; L++) {
-    var a = (L / 6) * Math.PI * 2 + 0.5;
-    var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.035, T.r * 2.1, 5), toon(0x241a20));
-    leg.position.set(Math.cos(a) * T.r * 0.9, T.hy * 0.55, Math.sin(a) * T.r * 0.9);
-    leg.rotation.z = Math.cos(a) * 0.75; leg.rotation.x = -Math.sin(a) * 0.75;
-    g.add(leg); legs.push({ m: leg, a: a });
+  var body = new THREE.Group();       /* everything above the legs pitches together */
+  g.add(body);
+
+  var chitin = toon(T.color, A.gloss, 0.3);
+  var chitinDark = toon(A.gloss, A.gloss, 0.5);
+  var eyeMat = basic(A.eye);
+
+  /* --- thorax --- */
+  var thorax = new THREE.Mesh(GEO.chitin, chitin);
+  thorax.scale.set(A.thorax[0] * sc, A.thorax[1] * sc, A.thorax[2] * sc);
+  thorax.position.set(0, A.ride * sc, 0);
+  body.add(thorax);
+
+  /* segmented plate over the thorax */
+  var plate = new THREE.Mesh(GEO.chitin, chitinDark);
+  plate.scale.set(A.thorax[0] * sc * 0.92, A.thorax[1] * sc * 0.62, A.thorax[2] * sc * 0.86);
+  plate.position.set(0, A.ride * sc + A.thorax[1] * sc * 0.42, -0.04 * sc);
+  body.add(plate);
+
+  /* --- abdomen, raised and tilted like a real hexapod --- */
+  var abd = new THREE.Mesh(GEO.chitin, A.sac ? toon(0xa8b544, 0xd8e83a, 0.75) : chitin);
+  abd.scale.set(A.abd[0] * sc, A.abd[1] * sc, A.abd[2] * sc);
+  abd.position.set(0, (A.ride + A.abdRise) * sc, A.abdOff * sc);
+  body.add(abd);
+  var abdSeg = new THREE.Mesh(GEO.chitin, chitinDark);
+  abdSeg.scale.set(A.abd[0] * sc * 0.72, A.abd[1] * sc * 0.72, A.abd[2] * sc * 0.34);
+  abdSeg.position.set(0, (A.ride + A.abdRise) * sc, (A.abdOff + A.abd[2] * 0.72) * sc);
+  body.add(abdSeg);
+
+  /* --- head, thrust forward and down --- */
+  var head = new THREE.Mesh(GEO.chitin, chitinDark);
+  head.scale.setScalar(A.head * sc);
+  head.position.set(0, (A.ride - 0.06) * sc, (A.thorax[2] * 0.95 + A.head * 0.6) * sc);
+  body.add(head);
+
+  /* --- eye cluster: several small lenses, unmistakably arthropod --- */
+  var eyes = new THREE.InstancedMesh(GEO.eyeball, eyeMat, A.eyes);
+  for (var e = 0; e < A.eyes; e++) {
+    var side = (e % 2) ? 1 : -1, row = Math.floor(e / 2);
+    _e.set(0, 0, 0); _q.setFromEuler(_e);
+    _v.set(side * A.head * sc * (0.52 + row * 0.16),
+           head.position.y + A.head * sc * (0.34 - row * 0.26),
+           head.position.z + A.head * sc * (0.52 - row * 0.14));
+    _s.setScalar(A.eyeR * sc * (1 - row * 0.14));
+    _m4.compose(_v, _q, _s);
+    eyes.setMatrixAt(e, _m4);
   }
+  eyes.instanceMatrix.needsUpdate = true;
+  body.add(eyes);
+
+  /* --- paired mandibles, 4 instances in one draw call, posed each frame --- */
+  var mands = new THREE.InstancedMesh(GEO.mand, chitinDark, 4);
+  body.add(mands);
+
+  /* --- dorsal spines --- */
+  if (A.spines) {
+    var spines = new THREE.InstancedMesh(GEO.spine, chitinDark, A.spines);
+    for (var sp2 = 0; sp2 < A.spines; sp2++) {
+      var tt = sp2 / Math.max(1, A.spines - 1);
+      _e.set(-0.5 - tt * 0.5, 0, 0); _q.setFromEuler(_e);
+      _v.set(0,
+             (A.ride + A.abdRise * tt) * sc + A.thorax[1] * sc * 0.72,
+             (0.2 - tt * 1.5) * sc);
+      _s.set(A.spineL * sc * 0.34, A.spineL * sc * (1.25 - tt * 0.5), A.spineL * sc * 0.34);
+      _m4.compose(_v, _q, _s);
+      spines.setMatrixAt(sp2, _m4);
+    }
+    spines.instanceMatrix.needsUpdate = true;
+    body.add(spines);
+  }
+
+  /* --- antennae --- */
+  var ants = null;
+  if (A.ant > 0.05) {
+    ants = new THREE.InstancedMesh(GEO.antenna, chitinDark, 2);
+    body.add(ants);
+  }
+
+  /* --- legs: 12 segments (femur + tibia x6) in ONE instanced draw call --- */
+  var legs = new THREE.InstancedMesh(GEO.legSeg, chitinDark, 12);
+  g.add(legs);
+
   g.position.set(x, 0, z); world.add(g);
-  enemies.push({ kind: kind, T: T, hp: T.hp, g: g, pos: { x: x, z: z }, cd: 0, wind: 0, lunge: 0, wob: Math.random() * 9, flash: 0, body: body, legs: legs });
+
+  enemies.push({
+    kind: kind, T: T, A: A, sc: sc, hp: T.hp, g: g, body: body, pos: { x: x, z: z },
+    cd: 0, wind: 0, lunge: 0, wob: Math.random() * 9, flash: 0,
+    thorax: thorax, abd: abd, head: head, eyes: eyes, mandMesh: mands, mandFlare: 0,
+    legMesh: legs, ants: ants,
+    mat: chitin, eyeMat: eyeMat, gait: Math.random() * Math.PI * 2
+  });
+  animateRig(enemies[enemies.length - 1], false, 0);   /* pose once so nothing pops on frame one */
 }
+
+/* place one leg segment between two local-space points */
+var _up = null, _pa = null, _pb = null, _dir = null;
+function setSegment(mesh, idx, ax, ay, az, bx, by, bz, rad) {
+  var dx = bx - ax, dy = by - ay, dz = bz - az;
+  var L = Math.hypot(dx, dy, dz) || 0.001;
+  _dir.set(dx / L, dy / L, dz / L);
+  _q.setFromUnitVectors(_up, _dir);
+  _v.set((ax + bx) / 2, (ay + by) / 2, (az + bz) / 2);
+  _s.set(rad, L, rad);
+  _m4.compose(_v, _q, _s);
+  mesh.setMatrixAt(idx, _m4);
+}
+
+/* full hexapod tripod gait, recomputed each frame in the enemy's local space */
+function animateRig(EN, moving, rear) {
+  var A = EN.A, sc = EN.sc, lm = EN.legMesh;
+  var stride = A.footR * sc * 0.42;
+  for (var i = 0; i < 6; i++) {
+    var ang = LEG_ANGLES[i];
+    var sa = Math.sin(ang), ca = Math.cos(ang);
+    var hipX = sa * A.hipR * sc, hipZ = ca * A.hipR * sc, hipY = A.ride * sc * 0.92;
+
+    var phase = EN.gait + (TRIPOD[i] ? Math.PI : 0);
+    var sw = Math.sin(phase);
+    var lift = moving ? Math.max(0, Math.sin(phase)) : 0;
+    var along = moving ? -Math.cos(phase) * stride : 0;
+
+    var footX = sa * A.footR * sc, footZ = ca * A.footR * sc + along;
+    var footY = lift * 0.34 * sc + rear * 0.1 * sc;
+
+    /* knee rides high and outboard — the classic spidery silhouette */
+    var kneeX = sa * (A.footR * 0.66 + 0.34) * sc;
+    var kneeZ = ca * (A.footR * 0.66 + 0.34) * sc + along * 0.45;
+    var kneeY = (A.knee + rear * 0.3) * sc + lift * 0.16 * sc;
+
+    setSegment(lm, i * 2, hipX, hipY, hipZ, kneeX, kneeY, kneeZ, A.legR * sc * 1.5);
+    setSegment(lm, i * 2 + 1, kneeX, kneeY, kneeZ, footX, footY, footZ, A.legR * sc);
+  }
+  lm.instanceMatrix.needsUpdate = true;
+
+  if (EN.ants) {
+    var hy = EN.head.position.y, hz = EN.head.position.z, hs = A.head * sc;
+    for (var k = 0; k < 2; k++) {
+      var sgn = k ? 1 : -1;
+      var tw = Math.sin(EN.gait * 1.7 + k) * 0.22;
+      _dir.set(sgn * 0.4 + tw, 0.62, 0.72); _dir.normalize();
+      _q.setFromUnitVectors(_up, _dir);
+      _v.set(sgn * hs * 0.4 + _dir.x * A.ant * sc * 0.5,
+             hy + hs * 0.5 + _dir.y * A.ant * sc * 0.5,
+             hz + hs * 0.3 + _dir.z * A.ant * sc * 0.5);
+      _s.set(0.035 * sc, A.ant * sc, 0.035 * sc);
+      _m4.compose(_v, _q, _s);
+      EN.ants.setMatrixAt(k, _m4);
+    }
+    EN.ants.instanceMatrix.needsUpdate = true;
+  }
+
+  /* mandibles: two jaws sweeping outward, each with an inward barb */
+  var hy2 = EN.head.position.y, hz2 = EN.head.position.z, hs2 = A.head * sc;
+  var spread = 0.22 + EN.mandFlare;
+  for (var mi = 0; mi < 2; mi++) {
+    var sgn2 = mi ? 1 : -1;
+    var px = sgn2 * hs2 * 0.45, py = hy2 - hs2 * 0.2, pz = hz2 + hs2 * 0.3;
+    var jl = A.mand * sc * 1.6;
+    var jx = px + Math.sin(sgn2 * spread) * jl, jy = py - Math.sin(rear * 0.3) * jl * 0.3, jz = pz + Math.cos(spread) * jl;
+    setSegment(EN.mandMesh, mi, px, py, pz, jx, jy, jz, A.mand * sc * 0.26);
+    /* barb hooks back toward the midline — the bit that makes it read as a jaw */
+    var bl = A.mand * sc * 0.55;
+    setSegment(EN.mandMesh, 2 + mi,
+      jx, jy, jz,
+      jx - Math.sin(sgn2 * spread) * bl * 1.3, jy + bl * 0.25, jz + Math.cos(spread) * bl * 0.7,
+      A.mand * sc * 0.17);
+  }
+  EN.mandMesh.instanceMatrix.needsUpdate = true;
+}
+
 function killEnemy(e, i) {
-  for (var p = 0; p < 7; p++) burst(e.pos.x, e.T.hy, e.pos.z, e.T.color);
+  for (var p = 0; p < 10; p++) burst(e.pos.x, e.T.hy, e.pos.z, e.T.color);
+  for (var q = 0; q < 8; q++) burst(e.pos.x, e.T.hy * 0.7, e.pos.z, e.A ? e.A.gloss : 0x201010);
+  for (var w = 0; w < 5; w++) burst(e.pos.x, e.T.hy, e.pos.z, 0x9fd83a);   /* ichor */
   if (e.T.boom) {
     var d = Math.hypot(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
     if (d < 4.4) hurtPlayer(e.T.dmg * (1 - d / 4.4), e.pos.x, e.pos.z);
@@ -1753,7 +1942,7 @@ function hitscan(dmg, spreadDeg) {
   var bestT = wallT, bestE = -1;
   for (var i = 0; i < enemies.length; i++) {
     var e = enemies[i];
-    var t = raySphere(o.x, o.y, o.z, dx, dy, dz, e.pos.x, e.T.hy, e.pos.z, e.T.r * 1.5);
+    var t = raySphere(o.x, o.y, o.z, dx, dy, dz, e.pos.x, e.T.hy, e.pos.z, e.T.r * 1.6);
     if (t >= 0 && t < bestT) { bestT = t; bestE = i; }
   }
   var bestT2 = -1;
@@ -2215,6 +2404,7 @@ function update(dt) {
     var EN = enemies[n];
     EN.wob += dt * 11; EN.cd -= dt;
     if (EN.flash > 0) EN.flash -= dt;
+    if (!EN.A) continue;
     var tx = player.pos.x - EN.pos.x, tz = player.pos.z - EN.pos.z, td = Math.hypot(tx, tz);
     if (td > 74) { world.remove(EN.g); enemies.splice(n, 1); continue; }
     if (td > EN.T.range) {
@@ -2224,9 +2414,6 @@ function update(dt) {
       if (Math.hypot(EN.pos.x - b4.x, EN.pos.z - b4.z) < EN.T.spd * dt * 0.3) {
         var sgn = ((EN.wob | 0) % 2) ? 1 : -1;
         moveCircle(EN.pos, -uz * sgn * EN.T.spd * dt * 0.9, ux * sgn * EN.T.spd * dt * 0.9, EN.T.r);
-      }
-      for (var lgi = 0; lgi < EN.legs.length; lgi++) {
-        EN.legs[lgi].m.rotation.y = Math.sin(EN.wob * 1.6 + EN.legs[lgi].a * 2) * 0.36;
       }
     } else {
       /* Telegraphed strike. Instant contact damage is what made these things feel
@@ -2247,13 +2434,36 @@ function update(dt) {
       }
     }
     if (EN.lunge > 0) EN.lunge -= dt;
-    /* rear-up during wind-up, lunge on release */
     var rear = EN.wind > 0 ? (1 - EN.wind / CFG.ATTACK_WINDUP) : 0;
-    EN.body.material.emissiveIntensity = EN.flash > 0 ? 1.5 : (0.26 + rear * 0.9);
-    EN.g.position.set(EN.pos.x, Math.abs(Math.sin(EN.wob)) * 0.14 + rear * 0.42 + (EN.lunge > 0 ? -0.2 : 0), EN.pos.z);
-    EN.g.rotation.x = -rear * 0.42 + (EN.lunge > 0 ? 0.3 : 0);
+    var moving = td > EN.T.range;
+    if (moving) EN.gait += dt * EN.T.spd * EN.A.gait;
+
+    /* chitin darkens and flushes when hit or about to strike */
+    EN.mat.emissiveIntensity = EN.flash > 0 ? 1.6 : (0.3 + rear * 0.85);
+    /* eye cluster burns brighter through the telegraph */
+    EN.eyeMat.color.setHex(rear > 0.05 ? 0xffffff : EN.A.eye);
+
+    /* mandibles flare open on the wind-up, snap shut on the lunge */
+    EN.mandFlare = Math.max(-0.2, rear * 0.95 - (EN.lunge > 0 ? 0.95 : 0));
+
+    /* bloater sac swells and glows the closer it gets — its own fuse, visibly lit */
+    if (EN.A.sac) {
+      var prox = Math.max(0, 1 - td / 9);
+      var pulse2 = 0.5 + Math.sin(performance.now() / (150 - prox * 105)) * 0.5;
+      EN.abd.scale.setScalar(1 + prox * 0.18 + pulse2 * prox * 0.14);
+      EN.abd.material.emissiveIntensity = 0.6 + prox * 1.9 + pulse2 * prox;
+    }
+
+    /* the whole upper body rears back before the strike, then pitches into it */
+    EN.body.rotation.x = -rear * 0.55 + (EN.lunge > 0 ? 0.42 : 0);
+    EN.body.position.y = rear * 0.36 * EN.sc + (EN.lunge > 0 ? -0.16 * EN.sc : 0);
+    EN.body.rotation.z = moving ? Math.sin(EN.gait) * 0.06 : 0;
+    EN.abd.rotation.x = Math.sin(EN.gait * 0.5) * 0.07 - rear * 0.2;
+
+    animateRig(EN, moving, rear);
+
+    EN.g.position.set(EN.pos.x, moving ? Math.abs(Math.sin(EN.gait)) * 0.045 : 0, EN.pos.z);
     EN.g.rotation.y = Math.atan2(tx, tz);
-    EN.g.scale.setScalar(1 + rear * 0.16);
 
     /* something closing from behind chitters, so you get a warning before the bite */
     if (td < 11) {
@@ -2560,6 +2770,7 @@ function init() {
   clock = new THREE.Clock();
   _m4 = new THREE.Matrix4(); _q = new THREE.Quaternion(); _e = new THREE.Euler();
   _v = new THREE.Vector3(); _s = new THREE.Vector3();
+  _up = new THREE.Vector3(0, 1, 0); _dir = new THREE.Vector3();
   gradMap = makeGradient(); initMaterials(); initGeo();
   scene = new THREE.Scene();
 
