@@ -495,6 +495,116 @@ t('10.9 rollEnemy only ever returns known enemy kinds', function () {
   return true;
 });
 
+
+/* ============ 11. MUSIC DIRECTOR ============ */
+t('11.1 every layer gain stays within 0..1 across all states', function () {
+  for (var p = 0; p <= 3; p++) {
+    for (var th = 0; th <= 10; th++) {
+      for (var h = 0; h <= 4; h++) {
+        for (var b = 0; b < 2; b++) {
+          var m = CW.musicMix({ phase: p, threat: th / 10, hurt: h / 4, boss: !!b, bossVent: !!b && h > 2, safe: p === 0 });
+          for (var k in m) {
+            if (!(m[k] >= 0 && m[k] <= 1)) return k + ' out of range: ' + m[k];
+            if (!isFinite(m[k])) return k + ' non-finite';
+          }
+        }
+      }
+    }
+  }
+  return true;
+});
+t('11.2 the drone is always present - the ship never goes silent', function () {
+  for (var p = 0; p <= 3; p++) {
+    var m = CW.musicMix({ phase: p });
+    if (m.drone < 0.3) return 'drone only ' + m.drone + ' at phase ' + p;
+  }
+  return true;
+});
+t('11.3 combat layers are silent during the tutorial', function () {
+  var m = CW.musicMix({ phase: 0, threat: 0, safe: true });
+  if (m.perc > 0.05) return 'percussion audible in tutorial: ' + m.perc;
+  if (m.stab > 0.001) return 'stabs audible in tutorial: ' + m.stab;
+  return true;
+});
+t('11.4 intensity rises monotonically with phase', function () {
+  var last = -1;
+  for (var p = 0; p <= 3; p++) {
+    var m = CW.musicMix({ phase: p, threat: 0 });
+    var total = m.drone + m.sub + m.pulse + m.arp + m.perc;
+    if (total <= last) return 'phase ' + p + ' is not more intense than ' + (p - 1);
+    last = total;
+  }
+  return true;
+});
+t('11.5 threat raises percussion independently of phase', function () {
+  var calm = CW.musicMix({ phase: 1, threat: 0 });
+  var hot = CW.musicMix({ phase: 1, threat: 1 });
+  return hot.perc > calm.perc && hot.stab > calm.stab || 'threat does not drive percussion';
+});
+t('11.6 the boss encounter is the loudest state', function () {
+  var normal = CW.musicMix({ phase: 3, threat: 0.5 });
+  var boss = CW.musicMix({ phase: 3, threat: 0.5, boss: true });
+  var sum = function (m) { var t2 = 0; for (var k in m) t2 += m[k]; return t2; };
+  return sum(boss) > sum(normal) || 'boss mix is not more intense';
+});
+t('11.7 the vent window is musically marked', function () {
+  var b = CW.musicMix({ phase: 3, boss: true });
+  var v = CW.musicMix({ phase: 3, boss: true, bossVent: true });
+  return v.stab > b.stab || 'vent window is not emphasised';
+});
+t('11.8 low health brings in the dread layer, full health does not', function () {
+  if (CW.musicMix({ phase: 2, hurt: 0 }).dread !== 0) return 'dread audible at full health';
+  return CW.musicMix({ phase: 2, hurt: 1 }).dread > 0.3 || 'dread missing when hurt';
+});
+t('11.9 tempo rises with phase, boss, and threat, and stays bounded', function () {
+  var last = 0;
+  for (var p = 0; p <= 3; p++) {
+    var b = CW.musicBPM({ phase: p });
+    if (b <= last) return 'bpm not rising at phase ' + p;
+    if (b < 40 || b > 130) return 'bpm out of bounds: ' + b;
+    last = b;
+  }
+  if (CW.musicBPM({ phase: 3, boss: true }) < CW.musicBPM({ phase: 3 })) return 'boss is not faster';
+  if (CW.musicBPM({ phase: 1, threat: 1 }) <= CW.musicBPM({ phase: 1, threat: 0 })) return 'threat does not raise tempo';
+  return CW.musicBPM({ phase: 3, boss: true, threat: 1 }) <= 130 || 'bpm ceiling breached';
+});
+t('11.10 threat level is monotonic in proximity and bounded', function () {
+  if (CW.threatLevel([]) !== 0) return 'empty list is not zero';
+  if (CW.threatLevel([40, 50]) !== 0) return 'distant enemies register threat';
+  var near = CW.threatLevel([2]), far = CW.threatLevel([20]);
+  if (!(near > far)) return 'closer is not more threatening';
+  var many = CW.threatLevel([1, 1, 1, 1, 1, 1, 1, 1]);
+  return (many <= 1 && many > 0.5) || 'swarm threat out of range: ' + many;
+});
+t('11.11 each ship code produces its own motif, deterministically', function () {
+  var a = CW.buildMotif(CW.musicSeed('K7M-3PQ'), 8);
+  var b = CW.buildMotif(CW.musicSeed('K7M-3PQ'), 8);
+  var c = CW.buildMotif(CW.musicSeed('XXX-999'), 8);
+  if (a.join(',') !== b.join(',')) return 'motif not deterministic';
+  if (a.join(',') === c.join(',')) return 'different ships share a motif';
+  return a.length === 8 || 'wrong motif length';
+});
+t('11.12 every motif note is in the scale', function () {
+  var r = CW.rng(500);
+  for (var i = 0; i < 400; i++) {
+    var m = CW.buildMotif(CW.musicSeed(CW.makeCode(r)), 8);
+    for (var j = 0; j < m.length; j++) {
+      var deg = m[j] % 12;
+      if (CW.SCALE.indexOf(deg) < 0) return 'note ' + m[j] + ' is outside the scale';
+    }
+  }
+  return true;
+});
+t('11.13 note frequencies are audible and finite', function () {
+  for (var o = -2; o <= 3; o++) {
+    for (var i = 0; i < CW.SCALE.length; i++) {
+      var hz = CW.noteHz(CW.SCALE[i], o);
+      if (!isFinite(hz) || hz < 10 || hz > 20000) return 'bad frequency ' + hz;
+    }
+  }
+  return true;
+});
+
 console.log('\n' + log.join('\n'));
 console.log('\n' + '='.repeat(52));
 console.log('  PASS ' + pass + '   FAIL ' + fail + '   TOTAL ' + (pass + fail));

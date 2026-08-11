@@ -49,6 +49,11 @@ THREE.Points = mk('Points', function (g, m) { this.geometry = g; this.material =
 THREE.PointLight = mk('PointLight', function (c, i, d, dc) { this.color = new Col(c); this.intensity = i === undefined ? 1 : i; this.distance = d; this.decay = dc; });
 THREE.AmbientLight = mk('AmbientLight', function (c, i) { this.color = new Col(c); this.intensity = i; });
 THREE.HemisphereLight = mk('HemisphereLight', function (a, b, i) { this.intensity = i; });
+THREE.DirectionalLight = mk('DirectionalLight', function (c, i) {
+  this.color = new Col(c); this.intensity = i === undefined ? 1 : i;
+  this.target = new (mk('Object3D'))();
+});
+THREE.MeshLambertMaterial = function (p) { Mat.call(this, p); this.fog = p && p.fog; };
 
 ['BoxGeometry', 'SphereGeometry', 'CylinderGeometry', 'ConeGeometry', 'IcosahedronGeometry',
  'OctahedronGeometry', 'TorusGeometry', 'RingGeometry', 'PlaneGeometry', 'CircleGeometry'].forEach(function (n) {
@@ -56,6 +61,10 @@ THREE.HemisphereLight = mk('HemisphereLight', function (a, b, i) { this.intensit
     for (var i = 0; i < arguments.length; i++) {
       if (typeof arguments[i] === 'number' && !isFinite(arguments[i])) throw new Error(n + ': non-finite arg ' + i);
       if (typeof arguments[i] === 'number' && arguments[i] < 0 && i < 3) throw new Error(n + ': negative dimension ' + arguments[i]);
+    }
+    /* arc-length argument must be positive or the segment renders as nothing */
+    if (n === 'CylinderGeometry' && arguments.length >= 7 && typeof arguments[7] === 'number' && arguments[7] <= 0) {
+      throw new Error('CylinderGeometry: non-positive arc length ' + arguments[7]);
     }
     this._g = n; this._args = [].slice.call(arguments);
   };
@@ -65,8 +74,8 @@ THREE.Float32BufferAttribute = function (arr, n) { this.array = arr; this.itemSi
 
 function Mat(p) { p = p || {}; this.color = new Col(p.color); this.emissive = new Col(p.emissive); this.emissiveIntensity = p.emissiveIntensity === undefined ? 1 : p.emissiveIntensity; this.opacity = p.opacity === undefined ? 1 : p.opacity; this.transparent = !!p.transparent; this.side = p.side; this.gradientMap = p.gradientMap; }
 THREE.MeshToonMaterial = function (p) { Mat.call(this, p); };
-THREE.MeshBasicMaterial = function (p) { Mat.call(this, p); };
-THREE.PointsMaterial = function (p) { Mat.call(this, p); };
+THREE.MeshBasicMaterial = function (p) { Mat.call(this, p); this.fog = p && p.fog; this.depthWrite = p && p.depthWrite; };
+THREE.PointsMaterial = function (p) { Mat.call(this, p); this.fog = p && p.fog; this.size = p && p.size; };
 THREE.DataTexture = function (d, w, h, f) { this.image = { data: d, width: w, height: h }; this.needsUpdate = false; };
 THREE.Fog = function (c, n, f) { this.color = new Col(c); this.near = n; this.far = f; };
 THREE.NearestFilter = 1003; THREE.RGBAFormat = 1023; THREE.BackSide = 1; THREE.DoubleSide = 2; THREE.FrontSide = 0;
@@ -192,20 +201,80 @@ global.document = {
 /* HUD elements that the code indexes into */
 var alertBars = getEl('alertBars'); alertBars.children = [new El('b0'), new El('b1'), new El('b2')];
 var armor = getEl('armor'); armor.children = [new El('a0'), new El('a1'), new El('a2')];
-['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','viewBtn','lookZone','stickL'].forEach(getEl);
+['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','viewBtn','muteBtn','lookZone','stickL'].forEach(getEl);
+
+/* ---------- Web Audio stub ----------
+   Records every node and connection so the tests exercise the real synthesis
+   path instead of the AC===null early-return. */
+var AUDIO = { nodes: [], started: 0, connections: 0, params: [] };
+function AParam(v) {
+  this.value = v; var self = this;
+  this.setValueAtTime = function (x) { AUDIO.params.push(x); self._chk(x); return self; };
+  this.exponentialRampToValueAtTime = function (x, t) {
+    if (x === 0) throw new Error('exponentialRamp to zero');
+    if (!isFinite(x) || !isFinite(t)) throw new Error('exponentialRamp non-finite');
+    self._chk(x); return self;
+  };
+  this.linearRampToValueAtTime = function (x) { self._chk(x); return self; };
+  this.setTargetAtTime = function (x, t, c) {
+    if (!isFinite(x)) throw new Error('setTargetAtTime non-finite value');
+    if (!(c > 0)) throw new Error('setTargetAtTime non-positive time constant');
+    self.value = x; return self;
+  };
+  this._chk = function (x) { if (!isFinite(x)) throw new Error('non-finite audio param'); };
+}
+function ANode(type) {
+  this.type_ = type; this.outs = [];
+  AUDIO.nodes.push(this);
+  this.connect = function (d) { if (!d) throw new Error('connect to nothing'); this.outs.push(d); AUDIO.connections++; return d; };
+  this.disconnect = function () {};
+}
+function makeAudioContext() {
+  AUDIO.nodes = []; AUDIO.started = 0; AUDIO.connections = 0;
+  var ctx = { sampleRate: 44100, currentTime: 0, state: 'running', destination: new ANode('dest') };
+  ctx._snapshot = function () {
+    if (!AUDIO.built) AUDIO.built = { nodes: AUDIO.nodes.length, started: AUDIO.started, connections: AUDIO.connections };
+  };
+  ctx.resume = function () { ctx.state = 'running'; };
+  ctx.createGain = function () { var n = new ANode('gain'); n.gain = new AParam(1); return n; };
+  ctx.createOscillator = function () {
+    var n = new ANode('osc'); n.frequency = new AParam(440); n.detune = new AParam(0); n.type = 'sine';
+    n.start = function () { AUDIO.started++; };
+    n.stop = function (t) { if (t !== undefined && !isFinite(t)) throw new Error('stop at non-finite time'); };
+    return n;
+  };
+  ctx.createBiquadFilter = function () {
+    var n = new ANode('filter'); n.frequency = new AParam(350); n.Q = new AParam(1); n.type = 'lowpass'; return n;
+  };
+  ctx.createStereoPanner = function () {
+    var n = new ANode('panner'); n.pan = new AParam(0); return n;
+  };
+  ctx.createConvolver = function () { var n = new ANode('convolver'); n.buffer = null; return n; };
+  ctx.createBuffer = function (ch, len, rate) {
+    if (!(len > 0)) throw new Error('createBuffer with length ' + len);
+    var data = []; for (var i = 0; i < ch; i++) data.push(new Float32Array(len));
+    return { numberOfChannels: ch, length: len, sampleRate: rate, getChannelData: function (i) { return data[i]; } };
+  };
+  ctx.createBufferSource = function () {
+    var n = new ANode('bufsrc'); n.buffer = null; n.loop = false;
+    n.start = function () { AUDIO.started++; }; n.stop = function () {};
+    return n;
+  };
+  return ctx;
+}
 
 global.window = {
   innerWidth: 900, innerHeight: 1600, devicePixelRatio: 2,
   _lis: {},
   addEventListener: function (t, f) { (this._lis[t] = this._lis[t] || []).push(f); },
   fire: function (t, e) { var l = this._lis[t] || []; for (var i = 0; i < l.length; i++) l[i](e); },
-  AudioContext: null, webkitAudioContext: null,
+  AudioContext: makeAudioContext, webkitAudioContext: null,
   maxTouchPoints: 0
 };
 global.navigator = { maxTouchPoints: 0 };
 global.performance = { now: function () { return Date.now(); } };
 global.requestAnimationFrame = function (f) { rafQ.push(f); return rafQ.length; };
-global.setTimeout = function (f) { return 0; };   /* fire-and-forget; audio callbacks only */
+global.setTimeout = function (f) { try { if (typeof f === 'function') f(); } catch (e) { throw e; } return 0; };
 global.clearTimeout = function () {};
 global.THREE = THREE;
 
@@ -1474,6 +1543,326 @@ t('R74 player never spawns in a sealed pocket', function () {
     if (D.hitsWall(D.player.pos.x, D.player.pos.z, D.PLR_R * 1.4)) return 'spawn is cramped on ship ' + s2;
   }
   return true;
+});
+
+
+/* ---------- BUILD 07: AUDIO ENGINE ---------- */
+function audioOn() {
+  getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {}, clientX: 5, clientY: 5 });
+  pump(2);
+}
+
+t('R75 audio graph builds without throwing', function () {
+  /* the context is created once and persists, so measure the build itself —
+     AUDIO.built is captured the first time audioInit runs */
+  resetInput(); D.start('AUD-01'); pump(2);
+  audioOn(); pump(10);
+  if (!D.audioReady) return 'audio never initialised';
+  if (!AUDIO.built) return 'no graph snapshot captured';
+  if (AUDIO.built.nodes < 15) return 'only ' + AUDIO.built.nodes + ' nodes in the initial graph';
+  if (AUDIO.built.nodes > 120) return 'persistent graph is bloated: ' + AUDIO.built.nodes + ' nodes';
+  if (AUDIO.built.started < 5) return 'only ' + AUDIO.built.started + ' sustained sources started';
+  console.log('         [audio] graph: ' + AUDIO.built.nodes + ' nodes, ' + AUDIO.built.connections +
+              ' connections, ' + AUDIO.built.started + ' sustained sources');
+  return true;
+});
+
+t('R76 every audio node is connected to something', function () {
+  var orphans = 0;
+  for (var i = 0; i < AUDIO.nodes.length; i++) {
+    var n = AUDIO.nodes[i];
+    if (n.type_ === 'dest') continue;
+    if (!n.outs.length) orphans++;
+  }
+  /* filters and gains created inside one-shots are connected on creation */
+  return orphans === 0 || orphans + ' audio nodes are not connected to anything';
+});
+
+t('R77 the score plays through a full session without throwing', function () {
+  resetInput(); D.start('AUD-02'); pump(2); audioOn(); resetInput();
+  var before = AUDIO.started;
+  for (var f = 0; f < 1200; f++) pump(1);           /* tutorial phase */
+  D.setKey('N0');
+  for (var f2 = 0; f2 < 1200; f2++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  D.setKey('N1'); D.give('hotEver', true);
+  for (var f3 = 0; f3 < 1800; f3++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  var played = AUDIO.started - before;
+  console.log('         [audio] ' + played + ' voices triggered across a full session');
+  return played > 200 || 'only ' + played + ' voices played - the sequencer is not running';
+});
+
+t('R78 music intensity actually tracks the game state', function () {
+  resetInput(); D.start('AUD-03'); pump(2); audioOn(); resetInput();
+  var quiet = D.musicState();
+  if (quiet.phase !== 0) return 'not in the tutorial phase at start';
+  var qm = global.CW.musicMix(quiet);
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  for (var f = 0; f < 2500; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  var loud = D.musicState();
+  var lm = global.CW.musicMix(loud);
+  if (loud.phase < 3) return 'never reached the flood phase';
+  console.log('         [audio] mix perc ' + qm.perc.toFixed(2) + ' -> ' + lm.perc.toFixed(2) +
+              ', threat ' + quiet.threat.toFixed(2) + ' -> ' + loud.threat.toFixed(2));
+  return lm.perc > qm.perc || 'percussion did not rise with the flood';
+});
+
+t('R79 boss encounter switches the score', function () {
+  resetInput(); D.start('AUD-04'); pump(2); audioOn(); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var R = D.ship.rooms[D.ship.reactorRoom];
+  var normal = global.CW.musicMix(D.musicState());
+  D.player.pos.x = R.cx; D.player.pos.z = R.cz + 5;
+  D.give('invuln', 9999);
+  for (var f = 0; f < 120; f++) { D.player.pos.x = R.cx; D.player.pos.z = R.cz + 5; D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  var st = D.musicState();
+  if (!st.boss) return 'boss music state never engaged';
+  var bm = global.CW.musicMix(st);
+  return bm.stab > normal.stab || 'boss score is not more intense';
+});
+
+t('R80 low health engages the dread layer', function () {
+  resetInput(); D.start('AUD-05'); pump(2); audioOn(); resetInput();
+  D.give('hp', 100); pump(2);
+  if (global.CW.musicMix(D.musicState()).dread > 0.01) return 'dread present at full health';
+  D.give('hp', 12); pump(2);
+  return global.CW.musicMix(D.musicState()).dread > 0.2 || 'dread absent at low health';
+});
+
+t('R81 positional sounds pan correctly left and right', function () {
+  resetInput(); D.start('AUD-06'); pump(2); audioOn(); resetInput();
+  D.S.yaw = 0; D.player.pos.x = 0; D.player.pos.z = 0; pump(2);
+  function panOf(x, z) {
+    AUDIO.nodes = [];
+    D.player.pos.x = 0; D.player.pos.z = 0; D.S.yaw = 0;
+    /* SFX.hit takes a world position */
+    D.sfx('hit', x, z);
+    for (var i = 0; i < AUDIO.nodes.length; i++) if (AUDIO.nodes[i].type_ === 'panner') return AUDIO.nodes[i].pan.value;
+    return null;
+  }
+  /* facing -Z: +X is to the player's LEFT in this basis, so just assert opposite signs */
+  var a = panOf(20, 0), b = panOf(-20, 0);
+  if (a === null || b === null) return 'no panner created for positional audio';
+  if (Math.abs(a) < 0.2 || Math.abs(b) < 0.2) return 'panning is negligible (' + a + ', ' + b + ')';
+  return (a * b < 0) || 'opposite sides did not pan to opposite channels';
+});
+
+t('R82 distant sounds are quieter than near ones', function () {
+  resetInput(); D.start('AUD-07'); pump(2); audioOn(); resetInput();
+  D.player.pos.x = 0; D.player.pos.z = 0; D.S.yaw = 0; pump(2);
+  function gainOf(dist) {
+    AUDIO.nodes = [];
+    D.player.pos.x = 0; D.player.pos.z = 0;
+    D.sfx('hit', dist, 0);
+    var best = null;
+    for (var i = 0; i < AUDIO.nodes.length; i++) {
+      var n = AUDIO.nodes[i];
+      if (n.type_ === 'gain' && n.gain.value < 1 && n.gain.value > 0) best = best === null ? n.gain.value : Math.min(best, n.gain.value);
+    }
+    return best;
+  }
+  var near = gainOf(2), far = gainOf(35);
+  if (near === null || far === null) return 'no attenuation gain found';
+  return far < near || 'distance does not attenuate (' + near + ' vs ' + far + ')';
+});
+
+t('R83 mute silences the master and unmute restores it', function () {
+  resetInput(); D.start('AUD-08'); pump(2); audioOn(); resetInput();
+  global.window.fire('keydown', { code: 'KeyM', preventDefault: function () {} });
+  pump(2);
+  if (D.masterGain() > 0.001) return 'mute did not silence the master: ' + D.masterGain();
+  global.window.fire('keydown', { code: 'KeyM', preventDefault: function () {} });
+  pump(2);
+  return D.masterGain() > 0.1 || 'unmute did not restore the master';
+});
+
+t('R84 audio survives ship restarts without leaking contexts', function () {
+  resetInput(); D.start('AUD-09'); pump(2); audioOn();
+  var ctxBefore = D.audioReady;
+  for (var i = 0; i < 8; i++) { D.start('AUDR' + i); pump(30); }
+  return D.audioReady === ctxBefore || 'audio state changed across restarts';
+});
+
+
+/* ---------- BUILD 08: WINDOWS AND EXTERIOR ---------- */
+t('R85 every ship generates viewports, deterministically', function () {
+  for (var s2 = 0; s2 < 10; s2++) {
+    resetInput(); D.start('WIN' + s2); pump(4);
+    var total = 0;
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var w = D.windowsOf(r);
+      if (!w.length) return 'room ' + r + ' has no viewport on ship ' + s2;
+      total += w.length;
+      for (var i = 0; i < w.length; i++) {
+        if (!isFinite(w[i].a) || !isFinite(w[i].half)) return 'non-finite window bearing';
+        if (w[i].half <= 0) return 'zero-width window';
+      }
+    }
+    /* every room is guaranteed one; crowded rooms with many exits get fewer */
+    if (total < D.ship.rooms.length * 1.6) return 'only ' + total + ' viewports across ' + D.ship.rooms.length + ' rooms';
+  }
+  /* same code, same windows */
+  resetInput(); D.start('WIN-DET'); pump(4);
+  var a = JSON.stringify(D.windowsOf(0));
+  resetInput(); D.start('WIN-DET'); pump(4);
+  return a === JSON.stringify(D.windowsOf(0)) || 'viewports are not deterministic per ship code';
+});
+
+t('R86 viewports never overlap a doorway', function () {
+  for (var s2 = 0; s2 < 12; s2++) {
+    resetInput(); D.start('WOV' + s2); pump(4);
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var R = D.ship.rooms[r], wins = D.windowsOf(r);
+      for (var w = 0; w < wins.length; w++) {
+        for (var l = 0; l < R.links.length; l++) {
+          var B = D.ship.rooms[R.links[l].to];
+          var da = Math.atan2(B.gx - R.gx, B.gy - R.gy);
+          var diff = Math.abs(da - wins[w].a);
+          while (diff > Math.PI) diff = Math.abs(diff - Math.PI * 2);
+          if (diff < wins[w].half + 0.1) return 'window overlaps a doorway on ship ' + s2 + ' room ' + r;
+        }
+      }
+    }
+  }
+  return true;
+});
+
+t('R87 windows do not breach the hull - glass still stops you', function () {
+  resetInput(); D.start('WSEAL-1'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var leaks = 0;
+  for (var trial = 0; trial < 6000; trial++) {
+    var R = D.ship.rooms[trial % D.ship.rooms.length];
+    var wins = D.windowsOf(trial % D.ship.rooms.length);
+    if (!wins || !wins.length) return 'a room has no viewport';
+    var w = wins[trial % wins.length];
+    var a = w.a + (Math.random() - 0.5) * w.half * 1.6;
+    var p = { x: R.cx + Math.sin(a) * (R.rad - 2.5), z: R.cz + Math.cos(a) * (R.rad - 2.5) };
+    if (D.hitsWall(p.x, p.z, D.PLR_R)) continue;
+    D.moveCircle(p, Math.sin(a) * 70, Math.cos(a) * 70, D.PLR_R);
+    if (!inPlayableSpace(p.x, p.z)) leaks++;
+  }
+  return leaks === 0 || leaks + ' escapes through a viewport';
+});
+
+t('R88 shots do not pass through glass', function () {
+  resetInput(); D.start('WSEAL-2'); pump(4); resetInput();
+  var escaped = 0;
+  for (var s2 = 0; s2 < D.ship.rooms.length; s2++) {
+    var R = D.ship.rooms[s2], wins = D.windowsOf(s2);
+    for (var w = 0; w < wins.length; w++) {
+      for (var k = 0; k < 12; k++) {
+        var a = wins[w].a + (k / 12 - 0.5) * wins[w].half * 1.5;
+        var ox = R.cx, oz = R.cz;
+        if (D.hitsWall(ox, oz, 0.6)) continue;
+        var t = D.rayWorld(ox, 2.9, oz, Math.sin(a), 0, Math.cos(a), 200);
+        if (t > R.rad + 3) escaped++;
+      }
+    }
+  }
+  return escaped === 0 || escaped + ' shots flew out through a viewport';
+});
+
+t('R89 exterior scene builds with stars, a sun, planets and asteroids', function () {
+  resetInput(); D.start('EXT-01'); pump(6);
+  if (!D.sky) return 'no sky group';
+  if (!D.exterior) return 'no exterior group';
+  var points = 0, meshes = 0;
+  (function walk(o) {
+    for (var i = 0; i < o.children.length; i++) {
+      var c = o.children[i];
+      if (c._type === 'Points') points++;
+      if (c._type === 'Mesh') meshes++;
+      walk(c);
+    }
+  })(D.sky);
+  if (points < 2) return 'only ' + points + ' star layers';
+  if (meshes < 5) return 'only ' + meshes + ' celestial bodies';
+  if (D.asteroids.length < 60) return 'only ' + D.asteroids.length + ' asteroids';
+  console.log('         [space] ' + points + ' star shells, ' + meshes + ' bodies, ' + D.asteroids.length + ' asteroids');
+  return true;
+});
+
+t('R90 every exterior material has fog disabled', function () {
+  resetInput(); D.start('EXT-02'); pump(6);
+  var fogged = [];
+  function walk(o, where) {
+    for (var i = 0; i < o.children.length; i++) {
+      var c = o.children[i];
+      if (c.material && c.material.fog !== false) fogged.push(where + ':' + c._type);
+      walk(c, where);
+    }
+  }
+  walk(D.sky, 'sky'); walk(D.exterior, 'exterior');
+  return fogged.length === 0 || fogged.length + ' exterior materials would be fogged out, e.g. ' + fogged[0];
+});
+
+t('R91 the sky follows the camera so stars never parallax', function () {
+  resetInput(); D.start('EXT-03'); pump(6); resetInput();
+  var offsets = [];
+  for (var f = 0; f < 400; f++) {
+    if (f % 4 === 0) {
+      D.player.pos.x += (Math.random() - 0.5) * 8;
+      D.player.pos.z += (Math.random() - 0.5) * 8;
+      D.resolve(D.player.pos, D.PLR_R);
+    }
+    pump(1);
+    offsets.push(Math.hypot(D.sky.position.x - D.camera.position.x,
+                            D.sky.position.y - D.camera.position.y,
+                            D.sky.position.z - D.camera.position.z));
+  }
+  var worst = Math.max.apply(null, offsets);
+  return worst < 0.001 || 'sky drifted ' + worst.toFixed(3) + ' units from the camera';
+});
+
+t('R92 asteroids drift and stay finite over a long session', function () {
+  resetInput(); D.start('EXT-04'); pump(6); resetInput();
+  var a0 = { x: D.asteroids[0].x, y: D.asteroids[0].y, z: D.asteroids[0].z };
+  for (var f = 0; f < 3000; f++) pump(1);
+  for (var i = 0; i < D.asteroids.length; i++) {
+    var a = D.asteroids[i];
+    if (!isFinite(a.x) || !isFinite(a.y) || !isFinite(a.z)) return 'asteroid ' + i + ' went non-finite';
+    if (!isFinite(a.ry)) return 'asteroid ' + i + ' spin went non-finite';
+  }
+  var moved = Math.hypot(D.asteroids[0].x - a0.x, D.asteroids[0].y - a0.y, D.asteroids[0].z - a0.z);
+  return moved > 0.5 || 'asteroids are not drifting (moved ' + moved.toFixed(2) + ')';
+});
+
+t('R93 different ship codes give different skies', function () {
+  resetInput(); D.start('SKY-AAA'); pump(6);
+  var a = D.asteroids.length + ':' + D.asteroids[0].x.toFixed(2) + ':' + D.sky.children.length;
+  resetInput(); D.start('SKY-BBB'); pump(6);
+  var b = D.asteroids.length + ':' + D.asteroids[0].x.toFixed(2) + ':' + D.sky.children.length;
+  resetInput(); D.start('SKY-AAA'); pump(6);
+  var c = D.asteroids.length + ':' + D.asteroids[0].x.toFixed(2) + ':' + D.sky.children.length;
+  if (a === b) return 'two different ships produced identical skies';
+  return a === c || 'the same ship code produced a different sky on reload';
+});
+
+t('R94 geometry budget still holds with windows and space added', function () {
+  var worstRoom = 0, worstShip = 0;
+  for (var s2 = 0; s2 < 8; s2++) {
+    resetInput(); D.start('BUD' + s2); pump(4);
+    var total = 0;
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var g = D.ship.rooms[r]._g;
+      if (!g) continue;
+      total += g.children.length;
+      worstRoom = Math.max(worstRoom, g.children.length);
+    }
+    worstShip = Math.max(worstShip, total);
+  }
+  console.log('         [budget] worst room ' + worstRoom + ' objects, worst ship ' + worstShip);
+  if (worstRoom > 140) return 'a single room has ' + worstRoom + ' objects';
+  return worstShip < 1100 || 'ship total ' + worstShip + ' objects is over budget';
+});
+
+t('R95 slice still completable with windows in', function () {
+  var fails = [];
+  for (var i = 0; i < 6; i++) {
+    var r = playthrough('WINRUN' + i);
+    if (r !== true) fails.push('WINRUN' + i + ': ' + r);
+  }
+  return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
 });
 
 console.log('\n' + log.join('\n'));
