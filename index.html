@@ -139,7 +139,7 @@ body.touch .stick,body.touch #fireBtn{display:block}
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 05</div>
+  <div class="sub">VERTICAL SLICE · BUILD 06</div>
   <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
   <div>
@@ -650,8 +650,8 @@ var CFG = CW.CFG;
 var $ = function (id) { return document.getElementById(id); };
 
 /* ---- constants ---- */
-var DOOR_W = 7, WALL_H = 7.2, WALL_T = 1, PLR_R = 0.8, ENEMY_CAP = 20;
-var TUBE_R = 5.0, TUBE_Y = 3.5, DOME_H = 4.2;
+var DOOR_W = 5.2, WALL_H = 7.2, WALL_T = 1, PLR_R = 0.8, ENEMY_CAP = 20;
+var TUBE_R = 3.7, TUBE_Y = 2.45, DOME_H = 4.2;
 var EYE = 1.72, SPEED = 8.6, SPRINT = 13.4, LIGHT_POOL = 7;
 var TP_DIST = 4.6, TP_SIDE = 1.15, TP_UP = 0.42;
 
@@ -800,19 +800,59 @@ function initGeo() {
 function polarIn(R, rnd, frac) {
   var rad = R.rad * (frac === undefined ? 0.7 : frac) * Math.sqrt(rnd());
   var a = rnd() * Math.PI * 2;
+  /* a is measured the same way as atan2(dx, dz), so it lines up with door angles */
   return { x: R.cx + Math.sin(a) * rad, z: R.cz + Math.cos(a) * rad, a: a, rad: rad };
+}
+/* Collision gap: narrower than the corridor mouth, so no ray slips through the
+   sliver either side. */
+/* pick the bearing furthest from every doorway, so fixtures never land in a throat */
+function clearAngle(R, used) {
+  var vg = viewGaps(R), best = 0, bestScore = -1e9;
+  for (var k = 0; k < 96; k++) {
+    var a = (k / 96) * Math.PI * 2, score = 9;
+    for (var q = 0; q < vg.length; q++) score = Math.min(score, Math.abs(angDiff(a, vg[q].a)) - vg[q].half);
+    if (used) for (var u = 0; u < used.length; u++) score = Math.min(score, Math.abs(angDiff(a, used[u])) - 0.55);
+    if (score > bestScore) { bestScore = score; best = a; }
+  }
+  return best;
 }
 function roomGaps(R) {
   var gaps = [];
   for (var l = 0; l < R.links.length; l++) {
     var B = ship.rooms[R.links[l].to], d = dirOf(R, B);
-    /* Gap must be NARROWER than the corridor mouth it serves. Wider leaves a
-       sliver either side that a zero-radius ray slips through into space, even
-       though a 0.8-radius player is stopped by the corridor walls. */
-    var half = Math.asin(Math.min(0.92, (DOOR_W / 2 - 0.2) / R.rad));
-    gaps.push({ a: Math.atan2(d.x, d.z), half: half });
+    gaps.push({ a: Math.atan2(d.x, d.z), half: Math.asin(Math.min(0.92, (DOOR_W / 2 - 0.2) / R.rad)) });
   }
   return gaps;
+}
+/* Visual opening: matches the corridor tube's cross-section, so the hull is cut
+   wide enough to actually SEE down the corridor. Always wider than the collision
+   gap — the tube's own curved wall is what stops you at the edges. */
+function viewGaps(R) {
+  var gaps = [];
+  for (var l = 0; l < R.links.length; l++) {
+    var B = ship.rooms[R.links[l].to], d = dirOf(R, B);
+    gaps.push({ a: Math.atan2(d.x, d.z), half: Math.asin(Math.min(0.9, TUBE_R / R.rad)) });
+  }
+  return gaps;
+}
+/* complement of the openings: the arcs of hull that actually get built */
+function wallArcs(gaps) {
+  var TAU = Math.PI * 2;
+  if (!gaps.length) return [{ start: 0, len: TAU }];
+  var g = gaps.map(function (x) {
+    var a = x.a; while (a < 0) a += TAU; while (a >= TAU) a -= TAU;
+    return { a: a, half: x.half };
+  }).sort(function (p, q) { return p.a - q.a; });
+  var arcs = [];
+  for (var i = 0; i < g.length; i++) {
+    var end = g[i].a + g[i].half;
+    var nx = g[(i + 1) % g.length];
+    var nextStart = nx.a - nx.half + ((i + 1 >= g.length) ? TAU : 0);
+    var len = nextStart - end;
+    while (len < -1e-6) len += TAU;
+    if (len > 0.03) arcs.push({ start: end, len: len });
+  }
+  return arcs;
 }
 
 /* ================= INSTANCED GREEBLE BATCHER ================= */
@@ -918,10 +958,13 @@ function resolve(p, r) {
     if (!moved) break;
   }
   if (hitsWall(p.x, p.z, r)) {
-    for (var ring = 1; ring <= 6; ring++) {
-      var rad = ring * r * 0.62;
-      for (var a = 0; a < 14; a++) {
-        var ang = (a / 14) * Math.PI * 2 + ring * 0.41;
+    /* curved hulls make tighter pockets than boxes did, so search further out
+       and at finer angular resolution before giving up */
+    for (var ring = 1; ring <= 12; ring++) {
+      var rad = ring * r * 0.5;
+      var steps = 12 + ring * 3;
+      for (var a = 0; a < steps; a++) {
+        var ang = (a / steps) * Math.PI * 2 + ring * 0.37;
         var nx = p.x + Math.cos(ang) * rad, nz = p.z + Math.sin(ang) * rad;
         if (!hitsWall(nx, nz, r)) { p.x = nx; p.z = nz; return; }
       }
@@ -1017,7 +1060,7 @@ function dirOf(a, b) { return { x: b.gx - a.gx, z: b.gy - a.gy }; }
 
 function buildWorld() {
   world = new THREE.Group(); scene.add(world);
-  colliders = []; roomGroups = []; doors = []; pickups = []; nodeObjs = []; lightAnchors = []; targets = [];
+  colliders = []; roomGroups = []; doors = []; pickups = []; nodeObjs = []; lightAnchors = []; targets = []; corrRects = [];
   var built = {};
   var rnd = CW.rng(CW.hash(ship.code + 'geo'));
   for (var pr = 0; pr < ship.rooms.length; pr++) ship.rooms[pr].rad = (ship.rooms[pr].w + ship.rooms[pr].d) / 4;
@@ -1054,6 +1097,8 @@ function buildWorld() {
   addBox(-ext, ext, -ext, ext, 0, null, -60);
 
   buildDoors();
+  clearDoorLanes();
+  buildNavGrid();
   buildLightPool();
   if (ship.rooms[ship.reactorRoom]) buildBoss(ship.rooms[ship.reactorRoom]);
 }
@@ -1067,23 +1112,39 @@ function buildRoomShell(G, R, sec, rnd) {
   fl.rotation.x = -Math.PI / 2; fl.scale.set(rad, rad, 1);
   fl.position.set(R.cx, 0, R.cz); G.add(fl);
 
-  /* hull shell, seen from the inside */
+  /* hull built as ARCS between the doorways — a solid cylinder here is what made
+     the corridors invisible from inside the room */
   var hullMat = new THREE.MeshToonMaterial({
     color: 0x323d49, gradientMap: gradMap, emissive: sec.fog,
     emissiveIntensity: 0.55, side: THREE.BackSide
   });
-  var shell = new THREE.Mesh(GEO.shell, hullMat);
-  shell.scale.set(rad, WALL_H, rad);
-  shell.position.set(R.cx, WALL_H / 2, R.cz); G.add(shell);
+  var vg = viewGaps(R);
+  var arcs = wallArcs(vg);
+  R._wallArcs = arcs;
+  for (var ai = 0; ai < arcs.length; ai++) {
+    var seg = Math.max(4, Math.round(arcs[ai].len * 7));
+    var wall = new THREE.Mesh(
+      new THREE.CylinderGeometry(1, 1, 1, seg, 1, true, arcs[ai].start, arcs[ai].len), hullMat);
+    wall.scale.set(rad, WALL_H, rad);
+    wall.position.set(R.cx, WALL_H / 2, R.cz);
+    G.add(wall);
+  }
 
-  /* domed overhead */
-  var domeMat = new THREE.MeshToonMaterial({
-    color: 0x232c37, gradientMap: gradMap, emissive: 0x070b10,
-    emissiveIntensity: 0.7, side: THREE.BackSide
-  });
-  var dome = new THREE.Mesh(GEO.dome, domeMat);
-  dome.scale.set(rad, DOME_H, rad);
-  dome.position.set(R.cx, WALL_H, R.cz); G.add(dome);
+  /* lintel over each opening, plus a collar ring framing it */
+  var crown = TUBE_Y + TUBE_R;
+  for (var gi = 0; gi < vg.length; gi++) {
+    var lh = Math.max(0.2, WALL_H - crown);
+    var lint = new THREE.Mesh(
+      new THREE.CylinderGeometry(1, 1, 1, 8, 1, true, vg[gi].a - vg[gi].half, vg[gi].half * 2), hullMat);
+    lint.scale.set(rad, lh, rad);
+    lint.position.set(R.cx, crown + lh / 2, R.cz);
+    G.add(lint);
+
+    var collar = new THREE.Mesh(new THREE.TorusGeometry(TUBE_R - 0.1, 0.17, 6, 18), MAT.strut);
+    collar.position.set(R.cx + Math.sin(vg[gi].a) * (rad - 0.15), TUBE_Y, R.cz + Math.cos(vg[gi].a) * (rad - 0.15));
+    collar.rotation.y = vg[gi].a;
+    G.add(collar);
+  }
 
   /* hull collision with a gap at every doorway */
   addRing(R.cx, R.cz, rad, WALL_H + DOME_H, roomGaps(R));
@@ -1093,7 +1154,7 @@ function buildRoomShell(G, R, sec, rnd) {
 
 /* ---- detail: ribs, hull rings, curved panels, radial deck plating ---- */
 function buildRoomDetail(G, R, sec, rnd) {
-  var rad = R.rad, gaps = roomGaps(R);
+  var rad = R.rad, gaps = viewGaps(R);
   function blocked(a, pad) {
     for (var i = 0; i < gaps.length; i++) if (Math.abs(angDiff(a, gaps[i].a)) < gaps[i].half + (pad || 0)) return true;
     return false;
@@ -1202,15 +1263,21 @@ function buildRoomDetail(G, R, sec, rnd) {
     buildConsole(G, R.cx + Math.sin(caa) * cr, R.cz + Math.cos(caa) * cr, caa + Math.PI, rnd, btn);
   }
 
-  /* --- central spine column in bigger rooms: very shippy, good sightline breaker --- */
+  /* --- spine column: offset onto a clear bearing, never dead centre.
+         A pillar at the room's centre sits across every doorway axis and blindfolds
+         the whole room. Offsetting keeps the shippy look and the cover without
+         cutting the sightlines. --- */
   if (rad > 8.6 && R.role !== 'REACTOR' && R.nodes.length === 0) {
-    var col = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.45, WALL_H, 12), MAT.hull);
-    col.position.set(R.cx, WALL_H / 2, R.cz); G.add(col);
+    var ca2 = clearAngle(R, null);
+    var cxp = R.cx + Math.sin(ca2) * rad * 0.46, czp = R.cz + Math.cos(ca2) * rad * 0.46;
+    var col = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.25, WALL_H, 12), MAT.hull);
+    col.position.set(cxp, WALL_H / 2, czp); G.add(col);
     for (var cr2 = 0; cr2 < 3; cr2++) {
-      var bnd = new THREE.Mesh(new THREE.TorusGeometry(1.32, 0.11, 6, 16), MAT.bolt);
-      bnd.position.set(R.cx, 1.2 + cr2 * 2.4, R.cz); bnd.rotation.x = Math.PI / 2; G.add(bnd);
+      var bnd = new THREE.Mesh(new THREE.TorusGeometry(1.12, 0.11, 6, 16), MAT.bolt);
+      bnd.position.set(cxp, 1.2 + cr2 * 2.4, czp); bnd.rotation.x = Math.PI / 2; G.add(bnd);
     }
-    addBox(R.cx - 1.4, R.cx + 1.4, R.cz - 1.4, R.cz + 1.4, WALL_H);
+    var pcl = addBox(cxp - 1.2, cxp + 1.2, czp - 1.2, czp + 1.2, WALL_H);
+    pcl.clearable = col;
   }
 
   addProps(G, R, sec, rnd, bBolt);
@@ -1243,15 +1310,24 @@ function buildConsole(G, x, z, ry, rnd, btn) {
       btn[Math.floor(rnd() * btn.length)].add(wx, ly, wz, 0.09, 0.045, 0.09, 0, ry, 0);
     }
   }
-  addBox(x - 0.95, x + 0.95, z - 0.5, z + 0.5, 1.3);
+  var cc = addBox(x - 0.95, x + 0.95, z - 0.5, z + 0.5, 1.3);
+  cc.clearable = g;
 }
 
 function addProps(G, R, sec, rnd, bBolt) {
   var n = 3 + Math.floor(rnd() * 4);
+  var vgap = viewGaps(R);
   for (var i = 0; i < n; i++) {
     var ps = polarIn(R, rnd, 0.74);
     var x = ps.x, z = ps.z;
     if (ps.rad < 3.8) continue;
+    /* keep the entrance lanes clear: a prop parked in a doorway throat blocks
+       navigation entirely and is miserable to round a corner into */
+    var inLane = false;
+    for (var q = 0; q < vgap.length; q++) {
+      if (Math.abs(angDiff(ps.a, vgap[q].a)) < vgap[q].half + 0.32) { inLane = true; break; }
+    }
+    if (inLane) continue;
     var g = new THREE.Group(), w, dp, h;
     if (sec.props === 'crates') {
       w = 1.5 + rnd() * 0.9; dp = w; h = 1.2 + rnd() * 1.1;
@@ -1299,13 +1375,14 @@ function addProps(G, R, sec, rnd, bBolt) {
     g.rotation.y = Math.atan2(x - R.cx, z - R.cz);
     G.add(g);
     var span = Math.max(w, dp) / 2;
-    addBox(x - span, x + span, z - span, z + span, h);
+    var pc = addBox(x - span, x + span, z - span, z + span, h);
+    pc.clearable = g; pc.room = R.id;
   }
 }
 
 function buildVents(G, R, rnd) {
   R.vpos = [];
-  var gaps = roomGaps(R);
+  var gaps = viewGaps(R);
   for (var v = 0; v < R.vents.length; v++) {
     var a = rnd() * Math.PI * 2, guard = 0;
     while (guard++ < 40) {
@@ -1337,10 +1414,10 @@ function buildCorridor(G, A, B, sec, rnd) {
   var horiz = d.x !== 0;
   var lo, hi, cross;
   if (horiz) {
-    var x0 = A.cx + d.x * (A.rad - 0.8), x1 = B.cx - d.x * (B.rad - 0.8);
+    var x0 = A.cx + d.x * (A.rad - 0.45), x1 = B.cx - d.x * (B.rad - 0.45);
     lo = Math.min(x0, x1); hi = Math.max(x0, x1); cross = A.cz;
   } else {
-    var z0 = A.cz + d.z * (A.rad - 0.8), z1 = B.cz - d.z * (B.rad - 0.8);
+    var z0 = A.cz + d.z * (A.rad - 0.45), z1 = B.cz - d.z * (B.rad - 0.45);
     lo = Math.min(z0, z1); hi = Math.max(z0, z1); cross = A.cx;
   }
   var len = hi - lo;
@@ -1439,6 +1516,9 @@ function buildCorridor(G, A, B, sec, rnd) {
   if (horiz) addBox(lo - 1.6, hi + 1.6, cross - TUBE_R, cross + TUBE_R, 60, null, TUBE_Y + TUBE_R - 0.3);
   else addBox(cross - TUBE_R, cross + TUBE_R, lo - 1.6, hi + 1.6, 60, null, TUBE_Y + TUBE_R - 0.3);
 
+  if (horiz) corrRects.push({ x0: lo - 2, x1: hi + 2, z0: cross - DOOR_W / 2 - 1, z1: cross + DOOR_W / 2 + 1 });
+  else corrRects.push({ x0: cross - DOOR_W / 2 - 1, x1: cross + DOOR_W / 2 + 1, z0: lo - 2, z1: hi + 2 });
+
   bRib.build(G); bPipe.build(G); bPipeR.build(G); bCable.build(G);
   bStrip.build(G); bGrate.build(G); bBolt.build(G);
   lightAnchors.push({ x: horiz ? mid : cross, y: TUBE_Y + 1.6, z: horiz ? cross : mid, color: 0x8fa8bd, base: 0.6 });
@@ -1459,23 +1539,24 @@ function buildDoors() {
       else { px = R.cx; pz = R.cz + d.z * (R.rad - 0.4); ry = 0; }
 
       /* two-leaf blast door with frame and warning light */
+      var DW = TUBE_R * 2 - 0.5, DH = TUBE_Y + TUBE_R - 0.35;
       [-1, 1].forEach(function (sgn) {
-        var leaf = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W / 2 - 0.05, DOOR_W - 0.3, 0.42), toon(0x4a2620, 0xff4530, 0.55));
-        leaf.position.set(sgn * DOOR_W / 4, (DOOR_W - 0.3) / 2, 0); g.add(leaf);
+        var leaf = new THREE.Mesh(new THREE.BoxGeometry(DW / 2 - 0.05, DH, 0.42), toon(0x4a2620, 0xff4530, 0.55));
+        leaf.position.set(sgn * DW / 4, DH / 2, 0); g.add(leaf);
         for (var rib = 0; rib < 3; rib++) {
-          var rr = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W / 2 - 0.4, 0.3, 0.5), MAT.strut);
-          rr.position.set(sgn * DOOR_W / 4, 1.1 + rib * 1.9, 0.02); g.add(rr);
+          var rr = new THREE.Mesh(new THREE.BoxGeometry(DW / 2 - 0.4, 0.28, 0.5), MAT.strut);
+          rr.position.set(sgn * DW / 4, 0.9 + rib * (DH / 3.4), 0.02); g.add(rr);
         }
       });
-      var seam = new THREE.Mesh(new THREE.BoxGeometry(0.12, DOOR_W - 0.3, 0.5), MAT.hullDark);
-      seam.position.y = (DOOR_W - 0.3) / 2; g.add(seam);
+      var seam = new THREE.Mesh(new THREE.BoxGeometry(0.12, DH, 0.5), MAT.hullDark);
+      seam.position.y = DH / 2; g.add(seam);
       var lampM = new THREE.Mesh(new THREE.BoxGeometry(0.9, 0.22, 0.3), basic(0xff4530));
-      lampM.position.set(0, DOOR_W - 0.1, 0.1); g.add(lampM);
+      lampM.position.set(0, DH + 0.18, 0.1); g.add(lampM);
       g.position.set(px, 0, pz); g.rotation.y = ry; world.add(g);
 
       var col = (d.x !== 0)
-        ? addBox(px - 0.35, px + 0.35, pz - DOOR_W / 2, pz + DOOR_W / 2)
-        : addBox(px - DOOR_W / 2, px + DOOR_W / 2, pz - 0.35, pz + 0.35);
+        ? addBox(px - 0.35, px + 0.35, pz - TUBE_R, pz + TUBE_R)
+        : addBox(px - TUBE_R, px + TUBE_R, pz - 0.35, pz + 0.35);
       doors.push({ lock: rev.lock, g: g, lamp: lampM, col: col, open: false, x: px, z: pz, room: R.id });
       lightAnchors.push({ x: px, y: 4.2, z: pz, color: 0xff4530, base: 1.0, door: doors[doors.length - 1] });
     }
@@ -1483,7 +1564,8 @@ function buildDoors() {
 }
 
 function buildBench(G, R) {
-  var bx = R.cx, bz = R.cz - R.rad * 0.58;
+  var ba = clearAngle(R, null);
+  var bx = R.cx + Math.sin(ba) * R.rad * 0.5, bz = R.cz + Math.cos(ba) * R.rad * 0.5;
   var g = new THREE.Group();
   var top = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.3, 2.2), MAT.console);
   top.position.y = 1.5; g.add(top);
@@ -1495,13 +1577,16 @@ function buildBench(G, R) {
   post.position.y = 2.1; g.add(post);
   var scr = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.8, 0.06), MAT.screenA);
   scr.position.set(1.4, 2.3, -0.4); scr.rotation.y = -0.4; g.add(scr);
-  g.position.set(bx, 0, bz); G.add(g);
+  g.position.set(bx, 0, bz); g.rotation.y = ba + Math.PI; G.add(g);
   addBox(bx - 2.2, bx + 2.2, bz - 1.1, bz + 1.1, 1.8);
-  pickups.push({ kind: 'bench', x: bx, z: bz + 2.4, g: g, coil: coil, r: 3.4, room: R.id });
+  pickups.push({ kind: 'bench', x: bx - Math.sin(ba) * 2.2, z: bz - Math.cos(ba) * 2.2, g: g, coil: coil, r: 3.4, room: R.id });
   lightAnchors.push({ x: bx, y: 3.0, z: bz, color: 0x7a5cff, base: 1.2 });
 
   /* practice canister: gives the tutorial's fire step something to hit */
-  var tx = R.cx + R.rad * 0.6, tz = R.cz + R.rad * 0.25;
+  var ta = clearAngle(R, [ba]);
+  /* well inside the hull: pushed out to 0.55r it ends up against the wall with no
+     room to stand behind and shoot it */
+  var tx = R.cx + Math.sin(ta) * R.rad * 0.34, tz = R.cz + Math.cos(ta) * R.rad * 0.34;
   var tg = new THREE.Group();
   var can = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 1.9, 10), toon(0xb8912f, 0xffd08a, 0.35));
   can.position.y = 1.5; tg.add(can);
@@ -1531,10 +1616,11 @@ function buildNode(G, R, node, sec) {
   core.position.y = 3.8; g.add(core);
   var conduit = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.2, 6), MAT.pipeRust);
   conduit.position.set(1.1, 2.6, 0); conduit.rotation.z = 0.3; g.add(conduit);
-  var off = (R.role === 'REACTOR' || R.role === 'CRYOBAY') ? R.rad * 0.6 : 0;
-  var px = R.cx, pz = R.cz + off;
+  var off = (R.role === 'REACTOR' || R.role === 'CRYOBAY') ? R.rad * 0.42 : 0;
+  var na = off ? clearAngle(R, null) + 1.15 : 0;
+  var px = R.cx + Math.sin(na) * off, pz = R.cz + Math.cos(na) * off;
   g.position.set(px, 0, pz); G.add(g);
-  addBox(px - 1.6, px + 1.6, pz - 1.6, pz + 1.6, 4.2);
+  addBox(px - 1.15, px + 1.15, pz - 1.15, pz + 1.15, 4.2);
   nodeObjs.push({ node: node, room: R.id, x: px, z: pz, g: g, core: core, col: col, r: 3.8 });
   lightAnchors.push({ x: px, y: 3.8, z: pz, color: 0xff5a3c, base: 1.3, node: nodeObjs[nodeObjs.length - 1] });
 }
@@ -1601,6 +1687,242 @@ function updateLights() {
   }
 }
 
+/* Guarantee an unobstructed lane from every room's centre to every doorway.
+   A single prop parked in a throat can seal a room off entirely — cheaper and
+   more reliable to sweep afterwards than to get every placement rule right. */
+function clearDoorLanes() {
+  var removed = 0;
+  for (var r = 0; r < ship.rooms.length; r++) {
+    var R = ship.rooms[r], vg = viewGaps(R);
+    for (var g = 0; g < vg.length; g++) {
+      var dx = Math.sin(vg[g].a), dz = Math.cos(vg[g].a);
+      var far = R.rad + 2.5;
+      for (var c = 0; c < colliders.length; c++) {
+        var col = colliders[c];
+        if (!col.clearable || !col.active) continue;
+        var mx = (col.x0 + col.x1) / 2, mz = (col.z0 + col.z1) / 2;
+        var rel = Math.hypot(mx - R.cx, mz - R.cz);
+        if (rel > far) continue;
+        var along = (mx - R.cx) * dx + (mz - R.cz) * dz;
+        if (along < 0 || along > far) continue;
+        var perp = Math.abs((mx - R.cx) * dz - (mz - R.cz) * dx);
+        var span = Math.max(col.x1 - col.x0, col.z1 - col.z0) / 2;
+        if (perp > span + 1.5) continue;
+        if (col.clearable) { col.active = false; col.clearable.visible = false; removed++; }
+        else if (perp < span + 0.9) console.warn('COLDWAKE: fixed geometry blocks a doorway lane in room ' + r);
+      }
+    }
+  }
+  return removed;
+}
+
+/* ================= NAVIGATION — FLOW FIELD =================
+   Local steering with shoulder probes always has failure pockets: a curved hull
+   plus a prop makes a concave trap that no purely reactive rule escapes. So the
+   ship is voxelised once at build time, and a breadth-first distance field is
+   flooded out from the player. Enemies just walk downhill. No local minima, no
+   oscillation, and it handles tubes, props and doorways identically. */
+var GCS = 0.9;                       /* grid cell size in world units */
+var NAV_PROBE = 0.62;                /* sample at the SMALLEST enemy radius: probing at
+                                        the largest one marks tubes and wall margins
+                                        unwalkable and strands the little ones */
+var gW = 0, gH = 0, gX0 = 0, gZ0 = 0;
+var walk = null, flow = null, flowQ = null, clearG = null, flowCell = -1, flowT = 0;
+var corrRects = [];
+
+function cellOf(x, z) {
+  var i = Math.floor((x - gX0) / GCS), j = Math.floor((z - gZ0) / GCS);
+  if (i < 0 || j < 0 || i >= gW || j >= gH) return -1;
+  return j * gW + i;
+}
+function cellX(c) { return gX0 + (c % gW + 0.5) * GCS; }
+function cellZ(c) { return gZ0 + ((c / gW) | 0 + 0.5) * GCS; }
+
+function nearAnyGeometry(x, z) {
+  for (var i = 0; i < ship.rooms.length; i++) {
+    var R = ship.rooms[i];
+    if (Math.hypot(x - R.cx, z - R.cz) < R.rad + 1.5) return true;
+  }
+  for (var c = 0; c < corrRects.length; c++) {
+    var q = corrRects[c];
+    if (x > q.x0 && x < q.x1 && z > q.z0 && z < q.z1) return true;
+  }
+  return false;
+}
+
+function buildNavGrid() {
+  var minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
+  for (var i = 0; i < ship.rooms.length; i++) {
+    var R = ship.rooms[i];
+    minX = Math.min(minX, R.cx - R.rad - 4); maxX = Math.max(maxX, R.cx + R.rad + 4);
+    minZ = Math.min(minZ, R.cz - R.rad - 4); maxZ = Math.max(maxZ, R.cz + R.rad + 4);
+  }
+  gX0 = minX; gZ0 = minZ;
+  gW = Math.ceil((maxX - minX) / GCS); gH = Math.ceil((maxZ - minZ) / GCS);
+  walk = new Uint8Array(gW * gH);
+  flow = new Int32Array(gW * gH);
+  flowQ = new Int32Array(gW * gH);
+  clearG = new Int32Array(gW * gH);
+  sampleRegion(0, 0, gW, gH);
+  buildClearance();
+  flowCell = -1;
+}
+function sampleRegion(i0, j0, i1, j1) {
+  for (var j = j0; j < j1; j++) {
+    for (var i = i0; i < i1; i++) {
+      var x = gX0 + (i + 0.5) * GCS, z = gZ0 + (j + 0.5) * GCS;
+      var ok = nearAnyGeometry(x, z) && !hitsWall(x, z, NAV_PROBE);
+      walk[j * gW + i] = ok ? 1 : 0;
+    }
+  }
+}
+/* multi-source BFS from every solid cell: clearG[c] = cells to the nearest wall.
+   Used to spawn in open floor rather than a nook that merely happens to connect. */
+function buildClearance() {
+  clearG.fill(-1);
+  var q = flowQ, head = 0, tail = 0;
+  for (var c = 0; c < walk.length; c++) if (!walk[c]) { clearG[c] = 0; q[tail++] = c; }
+  while (head < tail) {
+    var cur = q[head++], d = clearG[cur] + 1;
+    var ci = cur % gW, cj = (cur / gW) | 0;
+    for (var k = 0; k < 4; k++) {
+      var di = k === 0 ? -1 : k === 1 ? 1 : 0, dj = k === 2 ? -1 : k === 3 ? 1 : 0;
+      var i = ci + di, j = cj + dj;
+      if (i < 0 || j < 0 || i >= gW || j >= gH) continue;
+      var nc = j * gW + i;
+      if (clearG[nc] >= 0) continue;
+      clearG[nc] = d; q[tail++] = nc;
+    }
+  }
+}
+function refreshNavGridNear(x, z, rad) {
+  var i0 = Math.max(0, Math.floor((x - rad - gX0) / GCS));
+  var i1 = Math.min(gW, Math.ceil((x + rad - gX0) / GCS));
+  var j0 = Math.max(0, Math.floor((z - rad - gZ0) / GCS));
+  var j1 = Math.min(gH, Math.ceil((z + rad - gZ0) / GCS));
+  sampleRegion(i0, j0, i1, j1);
+  flowCell = -1;
+}
+
+/* nearest walkable cell, spiralling out — used when the player stands on a
+   sliver the grid rounded away */
+function nearestWalkable(c) {
+  if (c >= 0 && walk[c]) return c;
+  if (c < 0) return -1;
+  var ci = c % gW, cj = (c / gW) | 0;
+  for (var r = 1; r < 8; r++) {
+    for (var dj = -r; dj <= r; dj++) {
+      for (var di = -r; di <= r; di++) {
+        if (Math.max(Math.abs(di), Math.abs(dj)) !== r) continue;
+        var i = ci + di, j = cj + dj;
+        if (i < 0 || j < 0 || i >= gW || j >= gH) continue;
+        if (walk[j * gW + i]) return j * gW + i;
+      }
+    }
+  }
+  return -1;
+}
+
+function computeFlow(px, pz) {
+  var src = nearestWalkable(cellOf(px, pz));
+  if (src < 0) { flowCell = -1; return; }
+  flow.fill(-1);
+  var head = 0, tail = 0;
+  flowQ[tail++] = src; flow[src] = 0;
+  while (head < tail) {
+    var c = flowQ[head++];
+    var d = flow[c] + 1;
+    var ci = c % gW, cj = (c / gW) | 0;
+    for (var k = 0; k < 8; k++) {
+      var di = (k === 0 || k === 4 || k === 5) ? -1 : (k === 2 || k === 6 || k === 7) ? 1 : 0;
+      var dj = (k === 1 || k === 4 || k === 6) ? -1 : (k === 3 || k === 5 || k === 7) ? 1 : 0;
+      var i = ci + di, j = cj + dj;
+      if (i < 0 || j < 0 || i >= gW || j >= gH) continue;
+      var nc = j * gW + i;
+      if (!walk[nc] || flow[nc] >= 0) continue;
+      /* no cutting corners diagonally through a wall join */
+      if (di && dj && (!walk[cj * gW + i] || !walk[j * gW + ci])) continue;
+      flow[nc] = d;
+      flowQ[tail++] = nc;
+    }
+  }
+  flowCell = src;
+}
+
+/* Flood every walkable cell, return a mask of the largest connected component.
+   Anything outside it is a pocket the player must never be dropped into. */
+function mainComponent() {
+  var comp = new Int32Array(gW * gH).fill(-1);
+  var q = new Int32Array(gW * gH);
+  var bestId = -1, bestSize = 0, id = 0;
+  for (var c0 = 0; c0 < walk.length; c0++) {
+    if (!walk[c0] || comp[c0] >= 0) continue;
+    var head = 0, tail = 0, size = 0;
+    q[tail++] = c0; comp[c0] = id;
+    while (head < tail) {
+      var c = q[head++]; size++;
+      var ci = c % gW, cj = (c / gW) | 0;
+      for (var k = 0; k < 4; k++) {
+        var di = k === 0 ? -1 : k === 1 ? 1 : 0, dj = k === 2 ? -1 : k === 3 ? 1 : 0;
+        var i = ci + di, j = cj + dj;
+        if (i < 0 || j < 0 || i >= gW || j >= gH) continue;
+        var nc = j * gW + i;
+        if (!walk[nc] || comp[nc] >= 0) continue;
+        comp[nc] = id; q[tail++] = nc;
+      }
+    }
+    if (size > bestSize) { bestSize = size; bestId = id; }
+    id++;
+  }
+  return { comp: comp, best: bestId, size: bestSize };
+}
+/* nearest point to a room's centre that is genuinely part of the ship */
+function pickSpawn(R) {
+  var mc = mainComponent();
+  var best = null, bestScore = -1e9;
+  for (var j = 0; j < gH; j++) {
+    for (var i = 0; i < gW; i++) {
+      var c = j * gW + i;
+      if (!walk[c] || mc.comp[c] !== mc.best) continue;
+      var x = gX0 + (i + 0.5) * GCS, z = gZ0 + (j + 0.5) * GCS;
+      var d = Math.hypot(x - R.cx, z - R.cz);
+      if (d > R.rad * 0.8) continue;
+      /* open floor first, proximity to the centre only as a tie-break */
+      var score = Math.min(clearG[c], 6) * 10 - d;
+      if (score > bestScore) { bestScore = score; best = { x: x, z: z }; }
+    }
+  }
+  return best || { x: R.cx, z: R.cz };
+}
+
+function updateFlow(dt) {
+  if (!walk) return;
+  flowT -= dt;
+  var pc = nearestWalkable(cellOf(player.pos.x, player.pos.z));
+  if (pc !== flowCell || flowT <= 0) { computeFlow(player.pos.x, player.pos.z); flowT = 0.3; }
+}
+
+/* one step downhill; null means the enemy is off-grid or walled off */
+function flowStep(EN) {
+  if (!walk || flowCell < 0) return null;
+  var c = nearestWalkable(cellOf(EN.pos.x, EN.pos.z));
+  if (c < 0 || flow[c] < 0) return null;
+  if (flow[c] === 0) return null;
+  var ci = c % gW, cj = (c / gW) | 0, best = -1, bd = flow[c];
+  for (var k = 0; k < 8; k++) {
+    var di = (k === 0 || k === 4 || k === 5) ? -1 : (k === 2 || k === 6 || k === 7) ? 1 : 0;
+    var dj = (k === 1 || k === 4 || k === 6) ? -1 : (k === 3 || k === 5 || k === 7) ? 1 : 0;
+    var i = ci + di, j = cj + dj;
+    if (i < 0 || j < 0 || i >= gW || j >= gH) continue;
+    var nc = j * gW + i;
+    if (!walk[nc] || flow[nc] < 0) continue;
+    if (di && dj && (!walk[cj * gW + i] || !walk[j * gW + ci])) continue;
+    if (flow[nc] < bd) { bd = flow[nc]; best = nc; }
+  }
+  if (best < 0) return null;
+  return { x: gX0 + (best % gW + 0.5) * GCS, z: gZ0 + (((best / gW) | 0) + 0.5) * GCS };
+}
+
 /* ================= BOSS ================= */
 function buildBoss(R) {
   boss = CW.newBoss({ hp: 1000 });
@@ -1652,7 +1974,11 @@ function buildPlayer(R) {
   visor.position.set(0, 1.87, 0.13); visor.rotation.y = Math.PI; g.add(visor);
   var gun = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 1.2), toon(0x2b3843, 0x111820, 0.4));
   gun.position.set(0.34, 1.24, 0.6); g.add(gun);
-  g.position.set(R.cx, 0, R.cz + 3);
+  /* spawn on a cell proven to belong to the ship's main walkable component —
+     picking a spot by eye can drop the player in a sealed pocket */
+  var spawn = pickSpawn(R);
+  resolve(spawn, PLR_R);
+  g.position.set(spawn.x, 0, spawn.z);
   world.add(g);
 
   /* first-person viewmodel, parented to the camera */
@@ -1674,7 +2000,7 @@ function buildPlayer(R) {
   camera.add(headLamp.target);
   headLamp.target.position.set(0, 0, -1);
 
-  player = { g: g, pos: { x: R.cx, z: R.cz + 3 }, gun: gun, legs: legs, head: head, fwd: { x: 0, y: 0, z: -1 } };
+  player = { g: g, pos: { x: spawn.x, z: spawn.z }, gun: gun, legs: legs, head: head, fwd: { x: 0, y: 0, z: -1 } };
 }
 
 /* ================= ENEMIES ================= */
@@ -1808,6 +2134,7 @@ function spawnEnemy(kind, x, z) {
   enemies.push({
     kind: kind, T: T, A: A, sc: sc, hp: T.hp, g: g, body: body, pos: { x: x, z: z },
     cd: 0, wind: 0, lunge: 0, wob: Math.random() * 9, flash: 0,
+    navT: 0, tgt: null, avoid: 0, avoidSgn: Math.random() < 0.5 ? 1 : -1, stuck: 0, lastRoom: -1, lastNav: -1, thruDoor: false, goal: -1,
     thorax: thorax, abd: abd, head: head, eyes: eyes, mandMesh: mands, mandFlare: 0,
     legMesh: legs, ants: ants,
     mat: chitin, eyeMat: eyeMat, gait: Math.random() * Math.PI * 2
@@ -2248,6 +2575,9 @@ function openDoors() {
     var d = doors[i];
     if (d.open || !S.keys[d.lock]) continue;
     d.open = true; d.col.active = false; d.g.visible = false; SFX.door();
+    /* full rebuild: a local patch around the door can miss the far end of a long
+       tube, and this only happens twice in a run */
+    if (walk) buildNavGrid();
   }
 }
 
@@ -2407,13 +2737,28 @@ function update(dt) {
     if (!EN.A) continue;
     var tx = player.pos.x - EN.pos.x, tz = player.pos.z - EN.pos.z, td = Math.hypot(tx, tz);
     if (td > 74) { world.remove(EN.g); enemies.splice(n, 1); continue; }
+
     if (td > EN.T.range) {
-      var ux = tx / td, uz = tz / td;
+      /* close and in the clear: steer straight, so the final approach looks
+         deliberate rather than grid-snapped */
+      var los = td < 9 && rayWorld(EN.pos.x, 1.0, EN.pos.z, tx / td, 0, tz / td, td) >= td - 0.4;
+      var gx, gz;
+      if (los) { gx = tx; gz = tz; }
+      else {
+        EN.navT -= dt;
+        if (EN.navT <= 0 || !EN.tgt) { EN.navT = 0.12; EN.tgt = flowStep(EN); }
+        if (EN.tgt) { gx = EN.tgt.x - EN.pos.x; gz = EN.tgt.z - EN.pos.z; }
+        else { gx = tx; gz = tz; }
+      }
+      var gd = Math.hypot(gx, gz) || 1;
+      var ux = gx / gd, uz = gz / gd;
+      var step = EN.T.spd * dt;
       var b4 = { x: EN.pos.x, z: EN.pos.z };
-      moveCircle(EN.pos, ux * EN.T.spd * dt, uz * EN.T.spd * dt, EN.T.r);
-      if (Math.hypot(EN.pos.x - b4.x, EN.pos.z - b4.z) < EN.T.spd * dt * 0.3) {
-        var sgn = ((EN.wob | 0) % 2) ? 1 : -1;
-        moveCircle(EN.pos, -uz * sgn * EN.T.spd * dt * 0.9, ux * sgn * EN.T.spd * dt * 0.9, EN.T.r);
+      moveCircle(EN.pos, ux * step, uz * step, EN.T.r);
+      /* the field should never dead-end, but nudge sideways if geometry rounds badly */
+      if (Math.hypot(EN.pos.x - b4.x, EN.pos.z - b4.z) < step * 0.3) {
+        EN.tgt = null;
+        moveCircle(EN.pos, uz * EN.avoidSgn * step, -ux * EN.avoidSgn * step, EN.T.r);
       }
     } else {
       /* Telegraphed strike. Instant contact damage is what made these things feel
@@ -2463,7 +2808,13 @@ function update(dt) {
     animateRig(EN, moving, rear);
 
     EN.g.position.set(EN.pos.x, moving ? Math.abs(Math.sin(EN.gait)) * 0.045 : 0, EN.pos.z);
-    EN.g.rotation.y = Math.atan2(tx, tz);
+    var faceX = (EN.tgt && td > EN.T.range * 2.5) ? (EN.tgt.x - EN.pos.x) : tx;
+    var faceZ = (EN.tgt && td > EN.T.range * 2.5) ? (EN.tgt.z - EN.pos.z) : tz;
+    var want = Math.atan2(faceX, faceZ);
+    var dyaw = want - EN.g.rotation.y;
+    while (dyaw > Math.PI) dyaw -= Math.PI * 2;
+    while (dyaw < -Math.PI) dyaw += Math.PI * 2;
+    EN.g.rotation.y += dyaw * Math.min(1, dt * 9);
 
     /* something closing from behind chitters, so you get a warning before the bite */
     if (td < 11) {
@@ -2535,6 +2886,7 @@ function update(dt) {
     if (M.d) M.d.style.opacity = String(Math.max(0, 1 - M.t / 1.1));
   }
 
+  updateFlow(dt);
   spawnTick(dt);
   updateBoss(dt);
   findFocus();
@@ -2745,7 +3097,7 @@ function startGame(code) {
   buildPlayer(ship.rooms[0]);
   player.g.visible = !firstPerson;
   if (viewGun) viewGun.visible = firstPerson;
-  camera.position.set(ship.rooms[0].cx, EYE, ship.rooms[0].cz + 3);
+  camera.position.set(player.pos.x, EYE, player.pos.z);
 
   setWep(0);
   $('rifleAmt').textContent = '0';
@@ -2809,7 +3161,8 @@ window.__CW = {
   get ship() { return ship; }, get enemies() { return enemies; }, get colliders() { return colliders; },
   get pickups() { return pickups; }, get nodes() { return nodeObjs; }, get ended() { return ended; },
   get camera() { return camera; }, get firstPerson() { return firstPerson; },
-  get targets() { return targets; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
+  get targets() { return targets; }, get flowInfo() { return { w: gW, h: gH, cs: GCS, x0: gX0, z0: gZ0, walk: walk, flow: flow, src: flowCell }; },
+  mainComponent: function () { return mainComponent(); }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
   hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, rayWorld: rayWorld, PLR_R: PLR_R,
   start: function (c) { startGame(c); }, hurt: function (d) { hurtPlayer(d); },
   give: function (k, n) { S[k] = n; }, setKey: function (k) { S.keys[k] = true; openDoors(); },
