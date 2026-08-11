@@ -140,7 +140,11 @@ function El(id) {
 El.prototype.addEventListener = function (t, f) { (this._lis[t] = this._lis[t] || []).push(f); };
 El.prototype.removeEventListener = function () {};
 El.prototype.setPointerCapture = function () {};
-El.prototype.requestPointerLock = function () { global.document.pointerLockElement = this; };
+El.prototype.requestPointerLock = function () {
+  global.document.pointerLockElement = this;
+  var l = (global.document._lis && global.document._lis.pointerlockchange) || [];
+  for (var i = 0; i < l.length; i++) l[i]({});
+};
 El.prototype.querySelector = function () { return new El('knob'); };
 El.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 118, height: 118 }; };
 El.prototype.fire = function (t, e) {
@@ -161,13 +165,19 @@ global.document = {
   },
   body: { classList: { add: function () {}, remove: function () {}, toggle: function () {} } },
   createElement: function () { return new El('tmp'); },
-  addEventListener: function (t, f) { (this._lis = this._lis || {}), (this._lis[t] = this._lis[t] || []).push(f); },
+  addEventListener: function (t, f) { this._lis = this._lis || {}; (this._lis[t] = this._lis[t] || []).push(f); },
+  _lis: {},
   pointerLockElement: null,
-  exitPointerLock: function () { this.pointerLockElement = null; }
+  exitPointerLock: function () {
+    this.pointerLockElement = null;
+    var l = this._lis.pointerlockchange || [];
+    for (var i = 0; i < l.length; i++) l[i]({});
+  }
 };
 /* HUD elements that the code indexes into */
 var alertBars = getEl('alertBars'); alertBars.children = [new El('b0'), new El('b1'), new El('b2')];
 var armor = getEl('armor'); armor.children = [new El('a0'), new El('a1'), new El('a2')];
+['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','viewBtn','lookZone','stickL'].forEach(getEl);
 
 global.window = {
   innerWidth: 900, innerHeight: 1600, devicePixelRatio: 2,
@@ -758,6 +768,261 @@ t('R40 slice still completable in third person', function () {
   var r = playthrough('TP-RUN1');
   D.setView(true);
   return r;
+});
+
+
+/* ---------- BUILD 03: MEDKITS, TELEGRAPHS, TUTORIAL, FLOOD ---------- */
+function clearSpot() {
+  var best = null;
+  for (var i = 0; i < D.ship.rooms.length; i++) {
+    if (i === D.ship.reactorRoom) continue;
+    var r = D.ship.rooms[i];
+    if (!best || r.w * r.d > best.w * best.d) best = r;
+  }
+  for (var a = 0; a < 600; a++) {
+    var tx = best.cx + (Math.random() - 0.5) * (best.w - 6);
+    var tz = best.cz + (Math.random() - 0.5) * (best.d - 6);
+    if (!D.hitsWall(tx, tz, 3.2)) return { x: tx, z: tz };
+  }
+  return { x: best.cx, z: best.cz };
+}
+
+function medkitsIn() { return D.pickups.filter(function (p) { return p.kind === 'medkit'; }); }
+
+t('R41 medkits exist in the world and are reachable', function () {
+  resetInput(); D.start('MED-01'); pump(4); resetInput();
+  var mk = medkitsIn();
+  return mk.length >= 4 || 'only ' + mk.length + ' medkits placed';
+});
+
+t('R42 medkit heals when hurt and is consumed', function () {
+  resetInput(); D.start('MED-02'); pump(4); resetInput();
+  var mk = medkitsIn()[0];
+  D.give('hp', 30);
+  D.player.pos.x = mk.x; D.player.pos.z = mk.z;
+  pump(6);
+  if (!mk.taken) return 'medkit not consumed';
+  return D.S.hp > 30 || 'hp did not rise: ' + D.S.hp;
+});
+
+t('R43 medkit is left in place at full health', function () {
+  resetInput(); D.start('MED-03'); pump(4); resetInput();
+  var mk = medkitsIn()[1] || medkitsIn()[0];
+  D.give('hp', 100);
+  D.player.pos.x = mk.x; D.player.pos.z = mk.z;
+  pump(10);
+  return mk.taken === false || 'medkit wasted at full health';
+});
+
+t('R44 healing never exceeds max integrity', function () {
+  resetInput(); D.start('MED-04'); pump(4); resetInput();
+  var mk = medkitsIn();
+  for (var i = 0; i < mk.length; i++) {
+    D.give('hp', 99);
+    D.player.pos.x = mk[i].x; D.player.pos.z = mk[i].z;
+    pump(5);
+    if (D.S.hp > 100) return 'hp overflowed to ' + D.S.hp;
+  }
+  return true;
+});
+
+t('R45 nothing spawns during the tutorial phase', function () {
+  resetInput(); D.start('TUT-01'); pump(4); resetInput();
+  var codes = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
+  for (var f = 0; f < 3000; f++) {
+    if (f % 5 === 0) global.window.fire(Math.random() < 0.5 ? 'keydown' : 'keyup', { code: codes[Math.floor(Math.random() * 4)], preventDefault: function () {} });
+    pump(1);
+    if (D.enemies.length) return 'enemy spawned in phase ' + D.S.phase + ' at frame ' + f;
+  }
+  resetInput();
+  return D.S.phase === 0 || 'phase advanced without N0';
+});
+
+t('R46 the hive wakes once the lighting node is repaired', function () {
+  resetInput(); D.start('TUT-02'); pump(4); resetInput();
+  D.setKey('N0');
+  var saw = false;
+  for (var f = 0; f < 2000 && !saw; f++) { pump(1); if (D.enemies.length) saw = true; }
+  if (!saw) return 'no spawns after N0 (phase ' + D.S.phase + ')';
+  return D.S.phase >= 1 || 'phase still ' + D.S.phase;
+});
+
+t('R47 the flood phase produces more pressure than the waking phase', function () {
+  function measure(keys) {
+    resetInput(); D.start('FLOOD-X'); pump(4); resetInput();
+    for (var k = 0; k < keys.length; k++) D.setKey(keys[k]);
+    if (keys.indexOf('FLOOD') >= 0) D.give('hotEver', true);
+    D.give('invuln', 99999);
+    var peak = 0;
+    for (var f = 0; f < 2600; f++) { D.give('hp', 100); D.give('invuln', 99999); pump(1); peak = Math.max(peak, D.enemies.length); }
+    return peak;
+  }
+  var waking = measure(['N0']);
+  var flood = measure(['N0', 'N1', 'FLOOD']);
+  console.log('         [pacing] peak concurrent enemies — waking ' + waking + ', flood ' + flood);
+  return flood > waking || 'flood (' + flood + ') is not heavier than waking (' + waking + ')';
+});
+
+t('R48 concurrent enemies never exceed the phase cap', function () {
+  resetInput(); D.start('CAP-01'); pump(4); resetInput();
+  D.setKey('N0');
+  var over = 0;
+  for (var f = 0; f < 2500; f++) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    if (D.enemies.length > global.CW.enemyCap(D.S.phase)) over++;
+  }
+  return over === 0 || over + ' frames exceeded the cap for phase ' + D.S.phase;
+});
+
+t('R49 enemies telegraph before striking - no instant contact damage', function () {
+  resetInput(); D.start('TELE-01'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var spot = clearSpot();
+  var instant = 0, strikes = 0;
+  for (var f = 0; f < 4000; f++) {
+    D.player.pos.x = spot.x; D.player.pos.z = spot.z;
+    D.give('hp', 100); D.give('invuln', 0);
+    var before = [];
+    for (var e = 0; e < D.enemies.length; e++) before.push(D.enemies[e].wind);
+    var hp0 = D.S.hp;
+    pump(1);
+    if (D.S.hp < hp0) {
+      strikes++;
+      /* a strike must have been preceded by a wind-up on some enemy */
+      var hadWind = false;
+      for (var b = 0; b < before.length; b++) if (before[b] > 0) hadWind = true;
+      if (!hadWind) instant++;
+    }
+  }
+  if (!strikes) return 'no strikes observed - test inconclusive';
+  console.log('         [combat] ' + strikes + ' strikes observed, ' + instant + ' without a telegraph');
+  return instant === 0 || instant + '/' + strikes + ' strikes landed with no wind-up';
+});
+
+t('R50 wind-up is long enough to react to', function () {
+  return global.CW.CFG.ATTACK_WINDUP >= 0.35 || 'windup only ' + global.CW.CFG.ATTACK_WINDUP + 's';
+});
+
+t('R51 walking away during the wind-up cancels the hit', function () {
+  resetInput(); D.start('TELE-02'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var spot2 = clearSpot();
+  D.player.pos.x = spot2.x; D.player.pos.z = spot2.z;
+  var escapes = 0, tries = 0;
+  for (var f = 0; f < 3000 && tries < 12; f++) {
+    D.give('hp', 100); D.give('invuln', 0);
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) {
+      var EN = D.enemies[e];
+      if (EN.wind > 0.3) {
+        tries++;
+        /* teleport well clear mid-telegraph */
+        D.player.pos.x += 22; D.player.pos.z += 22;
+        D.resolve(D.player.pos, D.PLR_R);
+        var hp0 = D.S.hp;
+        pump(20);
+        if (D.S.hp >= hp0) escapes++;
+        break;
+      }
+    }
+  }
+  if (!tries) return 'never observed a wind-up - test inconclusive';
+  return escapes === tries || (tries - escapes) + '/' + tries + ' hits landed after the player fled';
+});
+
+t('R52 tutorial advances through every step and completes', function () {
+  resetInput(); D.start('TUT-03'); pump(4); resetInput();
+  if (D.tutStep !== 0) return 'tutorial did not start at step 0';
+  /* 1: move */
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  pump(90);
+  global.window.fire('keyup', { code: 'KeyW', preventDefault: function () {} });
+  if (D.tutStep < 1) return 'move step never completed';
+  /* 2: look */
+  for (var i = 0; i < 60; i++) { D.S.yaw += 0.2; pump(1); }
+  if (D.tutStep < 2) return 'look step never completed (step ' + D.tutStep + ')';
+  /* 3: destroy the canister */
+  var TG = D.targets[0];
+  if (!TG) return 'no practice canister spawned';
+  var guard = 0;
+  while (!TG.dead && guard++ < 400) {
+    D.player.pos.x = TG.x; D.player.pos.z = TG.z + 5;
+    D.S.yaw = 0; D.S.pitch = 0;
+    getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
+    pump(4);
+  }
+  global.window.fire('mouseup', { button: 0 });
+  if (!TG.dead) return 'canister never destroyed';
+  pump(4);
+  if (D.tutStep < 3) return 'fire step never completed (step ' + D.tutStep + ')';
+  /* 4: scrap */
+  var pk = D.pickups.filter(function (p) { return p.kind === 'scrap'; });
+  for (var s2 = 0; s2 < pk.length && D.S.scrap < 4; s2++) { D.player.pos.x = pk[s2].x; D.player.pos.z = pk[s2].z; pump(3); }
+  pump(4);
+  if (D.tutStep < 4) return 'salvage step never completed (scrap ' + D.S.scrap + ')';
+  /* 5: repair */
+  var n0 = D.nodes.filter(function (n) { return n.node.id === 'N0'; })[0];
+  D.player.pos.x = n0.x; D.player.pos.z = n0.z + 2.2; pump(3);
+  global.window.fire('keydown', { code: 'KeyE', preventDefault: function () {} });
+  pump(4);
+  return D.tutStep >= D.tutLen || 'tutorial stalled at step ' + D.tutStep + '/' + D.tutLen;
+});
+
+t('R53 shooting the canister does not throw or damage the player', function () {
+  resetInput(); D.start('TGT-01'); pump(4); resetInput();
+  var TG = D.targets[0];
+  var hp0 = D.S.hp;
+  for (var i = 0; i < 200; i++) {
+    D.player.pos.x = TG.x; D.player.pos.z = TG.z + 4;
+    D.S.yaw = 0;
+    getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
+    pump(3);
+  }
+  global.window.fire('mouseup', { button: 0 });
+  return D.S.hp === hp0 || 'player took ' + (hp0 - D.S.hp) + ' damage shooting a canister';
+});
+
+t('R54 slice still completable with all build-03 systems live', function () {
+  var fails = [];
+  for (var i = 0; i < 8; i++) {
+    var r = playthrough('B3RUN' + i);
+    if (r !== true) fails.push('B3RUN' + i + ': ' + r);
+  }
+  return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
+});
+
+
+t('R55 enemies can reach a player standing on open floor', function () {
+  resetInput(); D.start('PATH-01'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var spot = clearSpot(), closest = 1e9;
+  for (var f = 0; f < 2500; f++) {
+    D.player.pos.x = spot.x; D.player.pos.z = spot.z;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) {
+      closest = Math.min(closest, Math.hypot(D.enemies[e].pos.x - spot.x, D.enemies[e].pos.z - spot.z));
+    }
+  }
+  console.log('         [ai] closest approach on open floor: ' + closest.toFixed(2) + ' units');
+  return closest < 2.0 || 'enemies never closed past ' + closest.toFixed(2) + ' units';
+});
+
+
+t('R56 the firing path is actually live (guards against vacuous combat tests)', function () {
+  resetInput(); D.start('LIVE-01'); pump(4); resetInput();
+  var TG = D.targets[0];
+  if (!TG) return 'no canister to shoot';
+  D.player.pos.x = TG.x; D.player.pos.z = TG.z + 5;
+  D.S.yaw = 0; D.S.pitch = 0;
+  var hp0 = TG.hp;
+  getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
+  pump(3);
+  getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
+  pump(20);
+  global.window.fire('mouseup', { button: 0 });
+  return TG.hp < hp0 || 'canister took no damage — shots are not being fired at all';
 });
 
 console.log('\n' + log.join('\n'));

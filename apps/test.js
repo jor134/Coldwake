@@ -397,6 +397,104 @@ t('8.5 start room has no vents (safe hub)', function () {
   return true;
 });
 
+
+/* ============ 9. MEDKITS ============ */
+t('9.1 every ship has a medkit in the safe hub', function () {
+  var r = CW.rng(200);
+  for (var i = 0; i < 2000; i++) {
+    var s = CW.generateShip(CW.makeCode(r));
+    if (!s.rooms[0].medkits || !s.rooms[0].medkits.length) return 'no hub medkit on ' + s.code;
+  }
+  return true;
+});
+t('9.2 every ship has a medkit in the boss arena', function () {
+  var r = CW.rng(201);
+  for (var i = 0; i < 2000; i++) {
+    var s = CW.generateShip(CW.makeCode(r));
+    if (!s.rooms[s.reactorRoom].medkits.length) return 'no arena medkit on ' + s.code;
+  }
+  return true;
+});
+t('9.3 medkits are never stranded behind a gate they precede', function () {
+  var r = CW.rng(202);
+  for (var i = 0; i < 2000; i++) {
+    var s = CW.generateShip(CW.makeCode(r));
+    var r0 = CW.reachable(s.rooms, 0, {});
+    var n = 0;
+    for (var j = 0; j < r0.length; j++) n += s.rooms[r0[j]].medkits.length;
+    if (n < 1) return 'no medkit reachable keyless on ' + s.code;
+  }
+  return true;
+});
+t('9.4 medkit totals scale with ship size', function () {
+  var r = CW.rng(203);
+  for (var i = 0; i < 1500; i++) {
+    var s = CW.generateShip(CW.makeCode(r));
+    var n = 0;
+    for (var j = 0; j < s.rooms.length; j++) n += s.rooms[j].medkits.length;
+    if (n < 4) return 'only ' + n + ' medkits on a ' + s.rooms.length + '-room ship';
+    if (n > s.rooms.length) return n + ' medkits on ' + s.rooms.length + ' rooms - too generous';
+  }
+  return true;
+});
+
+/* ============ 10. INFESTATION PACING ============ */
+t('10.1 nothing spawns during the tutorial phase', function () {
+  if (CW.phaseFor({}) !== 0) return 'phase ' + CW.phaseFor({});
+  if (CW.spawnInterval(0, 0, 0) !== Infinity) return 'phase 0 spawns';
+  return CW.enemyCap(0) === 0 || 'phase 0 cap ' + CW.enemyCap(0);
+});
+t('10.2 phases advance in the intended order', function () {
+  if (CW.phaseFor({ N0: true }) !== 1) return 'post-N0 not phase 1';
+  if (CW.phaseFor({ N0: true, N1: true }) !== 2) return 'post-N1 not phase 2';
+  if (CW.phaseFor({ N0: true, N1: true, hotEver: true }) !== 3) return 'post-crystal not phase 3';
+  return true;
+});
+t('10.3 spawn interval shortens with every phase', function () {
+  for (var p = 2; p <= 3; p++) {
+    if (CW.spawnInterval(p, 0, 0) >= CW.spawnInterval(p - 1, 0, 0)) return 'phase ' + p + ' not tighter';
+  }
+  return true;
+});
+t('10.4 spawn interval shortens with alert and with elapsed time', function () {
+  for (var a = 1; a <= 3; a++) if (CW.spawnInterval(2, a, 0) >= CW.spawnInterval(2, a - 1, 0)) return 'alert ' + a + ' not tighter';
+  if (CW.spawnInterval(2, 0, 400) >= CW.spawnInterval(2, 0, 0)) return 'elapsed ramp does not tighten';
+  return true;
+});
+t('10.5 spawn interval has a floor - it never becomes unsurvivable', function () {
+  var worst = CW.spawnInterval(3, 3, 100000);
+  return (worst > 0.4 && isFinite(worst)) || 'floor breached: ' + worst;
+});
+t('10.6 enemy cap rises with phase and is bounded', function () {
+  for (var p = 1; p <= 3; p++) {
+    if (CW.enemyCap(p) <= CW.enemyCap(p - 1)) return 'cap not rising at ' + p;
+    if (CW.enemyCap(p) > 24) return 'cap too high: ' + CW.enemyCap(p);
+  }
+  return true;
+});
+t('10.7 early phases only produce the weakest enemy', function () {
+  for (var i = 0; i < 500; i++) {
+    if (CW.rollEnemy(1, 0, Math.random()) !== 'skitter') return 'phase 1 produced a non-skitter';
+    if (CW.rollEnemy(2, 3, Math.random()) === 'stalker') return 'stalker leaked into phase 2';
+  }
+  return true;
+});
+t('10.8 stalkers only appear at high alert in the flood phase', function () {
+  var seen = false;
+  for (var i = 0; i < 4000; i++) if (CW.rollEnemy(3, 2, Math.random()) === 'stalker') seen = true;
+  if (!seen) return 'stalkers never appear at flood + alert 2';
+  for (var j = 0; j < 2000; j++) if (CW.rollEnemy(3, 0, Math.random()) === 'stalker') return 'stalker at alert 0';
+  return true;
+});
+t('10.9 rollEnemy only ever returns known enemy kinds', function () {
+  var ok = { skitter: 1, clinger: 1, bloater: 1, stalker: 1 };
+  for (var p = 0; p <= 3; p++) for (var a = 0; a <= 3; a++) for (var i = 0; i < 400; i++) {
+    var k = CW.rollEnemy(p, a, Math.random());
+    if (!ok[k]) return 'unknown kind ' + k;
+  }
+  return true;
+});
+
 console.log('\n' + log.join('\n'));
 console.log('\n' + '='.repeat(52));
 console.log('  PASS ' + pass + '   FAIL ' + fail + '   TOTAL ' + (pass + fail));
