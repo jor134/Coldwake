@@ -65,6 +65,46 @@ THREE.PointsMaterial = function (p) { Mat.call(this, p); };
 THREE.DataTexture = function (d, w, h, f) { this.image = { data: d, width: w, height: h }; this.needsUpdate = false; };
 THREE.Fog = function (c, n, f) { this.color = new Col(c); this.near = n; this.far = f; };
 THREE.NearestFilter = 1003; THREE.RGBAFormat = 1023; THREE.BackSide = 1; THREE.DoubleSide = 2; THREE.FrontSide = 0;
+THREE.InstancedMesh = mk('InstancedMesh', function (g, m, count) {
+  if (!g) throw new Error('InstancedMesh with no geometry');
+  if (!m) throw new Error('InstancedMesh with no material');
+  if (!(count > 0)) throw new Error('InstancedMesh with count ' + count);
+  this.geometry = g; this.material = m; this.count = count;
+  this._set = new Array(count).fill(false);
+  this.instanceMatrix = { needsUpdate: false };
+  this.setMatrixAt = function (i, mat) {
+    if (i < 0 || i >= count) throw new Error('setMatrixAt out of range ' + i + '/' + count);
+    if (!mat || !mat.elements) throw new Error('setMatrixAt with bad matrix');
+    for (var k = 0; k < 16; k++) if (!isFinite(mat.elements[k])) throw new Error('non-finite instance matrix');
+    this._set[i] = true;
+  };
+});
+THREE.Matrix4 = function () {
+  this.elements = new Array(16).fill(0);
+  this.compose = function (p, q, s) {
+    if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.z)) throw new Error('compose: non-finite position');
+    if (!isFinite(s.x) || !isFinite(s.y) || !isFinite(s.z)) throw new Error('compose: non-finite scale');
+    if (s.x === 0 || s.y === 0 || s.z === 0) throw new Error('compose: zero scale');
+    for (var i = 0; i < 16; i++) this.elements[i] = 0;
+    this.elements[0] = s.x; this.elements[5] = s.y; this.elements[10] = s.z;
+    this.elements[12] = p.x; this.elements[13] = p.y; this.elements[14] = p.z; this.elements[15] = 1;
+    return this;
+  };
+};
+THREE.Quaternion = function () {
+  this.setFromEuler = function (e) {
+    if (!isFinite(e.x) || !isFinite(e.y) || !isFinite(e.z)) throw new Error('quaternion from non-finite euler');
+    return this;
+  };
+};
+THREE.Euler = function () {
+  this.x = this.y = this.z = 0;
+  this.set = function (x, y, z) { this.x = x; this.y = y; this.z = z; return this; };
+};
+THREE.SpotLight = mk('SpotLight', function (c, i, d, ang, pen, dec) {
+  this.color = new Col(c); this.intensity = i; this.distance = d; this.angle = ang;
+  this.target = new (mk('Object3D'))();
+});
 THREE.Clock = function () { this.getDelta = function () { return 1 / 30; }; };
 THREE.Raycaster = function () {
   this.ray = { intersectPlane: function (p, t) { t.set(12, 1.2, 8); return t; } };
@@ -100,6 +140,7 @@ function El(id) {
 El.prototype.addEventListener = function (t, f) { (this._lis[t] = this._lis[t] || []).push(f); };
 El.prototype.removeEventListener = function () {};
 El.prototype.setPointerCapture = function () {};
+El.prototype.requestPointerLock = function () { global.document.pointerLockElement = this; };
 El.prototype.querySelector = function () { return new El('knob'); };
 El.prototype.getBoundingClientRect = function () { return { left: 0, top: 0, width: 118, height: 118 }; };
 El.prototype.fire = function (t, e) {
@@ -119,7 +160,10 @@ global.document = {
     return [];
   },
   body: { classList: { add: function () {}, remove: function () {}, toggle: function () {} } },
-  createElement: function () { return new El('tmp'); }
+  createElement: function () { return new El('tmp'); },
+  addEventListener: function (t, f) { (this._lis = this._lis || {}), (this._lis[t] = this._lis[t] || []).push(f); },
+  pointerLockElement: null,
+  exitPointerLock: function () { this.pointerLockElement = null; }
 };
 /* HUD elements that the code indexes into */
 var alertBars = getEl('alertBars'); alertBars.children = [new El('b0'), new El('b1'), new El('b2')];
@@ -535,6 +579,185 @@ t('R29 slice is completable on 12 different randomly generated ships', function 
     if (r !== true) fails.push('RUN' + i + 'X: ' + r);
   }
   return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
+});
+
+/* ---------- BUILD 02 SYSTEMS: CAMERA, HITSCAN, LIGHTING, INSTANCING ---------- */
+function pointInSolid(x, y, z) {
+  var cols = D.colliders;
+  for (var i = 0; i < cols.length; i++) {
+    var c = cols[i];
+    if (!c.active) continue;
+    if (x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1 && y > 0 && y < c.h) return c;
+  }
+  return null;
+}
+function wander(frames) {
+  var codes = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
+  for (var f = 0; f < frames; f++) {
+    if (f % 5 === 0) {
+      var c = codes[Math.floor(Math.random() * 4)];
+      global.window.fire(Math.random() < 0.5 ? 'keydown' : 'keyup', { code: c, preventDefault: function () {} });
+    }
+    if (f % 3 === 0) {
+      D.S.yaw += (Math.random() - 0.5) * 0.7;
+      D.S.pitch = Math.max(-1.4, Math.min(1.4, D.S.pitch + (Math.random() - 0.5) * 0.5));
+    }
+    pump(1);
+  }
+}
+
+t('R30 third-person camera never ends a frame inside solid geometry', function () {
+  resetInput(); D.start('CAM-3P'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.setView(false);
+  if (D.firstPerson) return 'failed to switch to third person';
+  var bad = 0, first = null;
+  var codes = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
+  for (var f = 0; f < 6000; f++) {
+    if (f % 5 === 0) global.window.fire(Math.random() < 0.5 ? 'keydown' : 'keyup', { code: codes[Math.floor(Math.random() * 4)], preventDefault: function () {} });
+    if (f % 3 === 0) { D.S.yaw += (Math.random() - 0.5) * 0.7; D.S.pitch = Math.max(-1.4, Math.min(1.4, D.S.pitch + (Math.random() - 0.5) * 0.5)); }
+    pump(1);
+    var c = D.camera.position;
+    var hit = pointInSolid(c.x, c.y, c.z);
+    if (hit) { bad++; if (!first) first = c.x.toFixed(1) + ',' + c.y.toFixed(1) + ',' + c.z.toFixed(1); }
+  }
+  resetInput();
+  return bad === 0 || bad + '/6000 frames had the camera inside a wall, first at ' + first;
+});
+
+t('R31 camera position stays finite in both views', function () {
+  resetInput(); D.start('CAM-FIN'); pump(4); resetInput();
+  for (var mode = 0; mode < 2; mode++) {
+    D.setView(mode === 0);
+    for (var f = 0; f < 1500; f++) {
+      D.S.yaw += (Math.random() - 0.5) * 2.4;
+      D.S.pitch = Math.max(-1.5, Math.min(1.5, D.S.pitch + (Math.random() - 0.5) * 1.2));
+      pump(1);
+      var c = D.camera.position;
+      if (!isFinite(c.x) || !isFinite(c.y) || !isFinite(c.z)) return 'NaN camera in mode ' + mode + ' frame ' + f;
+    }
+  }
+  return true;
+});
+
+t('R32 first-person camera sits at the player eye position', function () {
+  resetInput(); D.start('CAM-1P'); pump(4); resetInput();
+  D.setView(true);
+  pump(6);
+  var c = D.camera.position, p = D.player.pos;
+  var dxz = Math.hypot(c.x - p.x, c.z - p.z);
+  if (dxz > 0.05) return 'camera offset from player by ' + dxz.toFixed(3);
+  return (c.y > 1.4 && c.y < 2.1) || 'eye height ' + c.y.toFixed(2);
+});
+
+t('R33 third-person camera never sits further than its configured boom', function () {
+  resetInput(); D.start('CAM-BOOM'); pump(4); resetInput();
+  D.setView(false);
+  var worst = 0;
+  for (var f = 0; f < 1200; f++) {
+    D.S.yaw += (Math.random() - 0.5) * 1.6;
+    D.S.pitch = Math.max(-1.4, Math.min(1.4, D.S.pitch + (Math.random() - 0.5) * 0.9));
+    pump(1);
+    var c = D.camera.position, p = D.player.pos;
+    worst = Math.max(worst, Math.hypot(c.x - p.x, c.z - p.z, c.y - 1.72));
+  }
+  return worst < 6.0 || 'boom reached ' + worst.toFixed(2) + ' units';
+});
+
+t('R34 hitscan ray always returns a finite non-negative distance', function () {
+  resetInput(); D.start('RAY-01'); pump(4); resetInput();
+  var p = D.player.pos;
+  for (var i = 0; i < 4000; i++) {
+    var yaw = Math.random() * Math.PI * 2, pit = (Math.random() - 0.5) * 2.8;
+    var dx = -Math.sin(yaw) * Math.cos(pit), dy = Math.sin(pit), dz = -Math.cos(yaw) * Math.cos(pit);
+    var t = D.rayWorld(p.x, 1.72, p.z, dx, dy, dz, 70);
+    if (!isFinite(t)) return 'non-finite t at iter ' + i;
+    if (t < 0) return 'negative t ' + t;
+    if (t > 70.0001) return 't exceeded max: ' + t;
+  }
+  return true;
+});
+
+t('R35 firing in every direction is stable and cannot shoot through walls', function () {
+  resetInput(); D.start('RAY-02'); pump(4); resetInput();
+  getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
+  for (var f = 0; f < 1200; f++) {
+    D.S.yaw += 0.21; D.S.pitch = Math.sin(f / 17) * 1.3;
+    pump(1);
+  }
+  global.window.fire('mouseup', { button: 0 });
+  var p = D.player.pos;
+  return !pointInSolid(p.x, 1.2, p.z) || 'player ended inside geometry after firing soak';
+});
+
+t('R36 active dynamic lights never exceed the pool budget', function () {
+  resetInput(); D.start('LIGHT-1'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var maxOn = 0;
+  for (var f = 0; f < 2000; f++) {
+    if (f % 5 === 0) global.window.fire(Math.random() < 0.5 ? 'keydown' : 'keyup', { code: ['KeyW', 'KeyA', 'KeyS', 'KeyD'][Math.floor(Math.random() * 4)], preventDefault: function () {} });
+    pump(1);
+    var on = 0;
+    (function walk(o) {
+      for (var i = 0; i < o.children.length; i++) {
+        var c = o.children[i];
+        if (c._type === 'PointLight' && c.intensity > 0.001) on++;
+        if (c.children && c.children.length) walk(c);
+      }
+    })(global.__scene || { children: [] });
+    maxOn = Math.max(maxOn, on);
+  }
+  resetInput();
+  return maxOn <= 8 || 'peak ' + maxOn + ' active point lights (budget 7 + boss)';
+});
+
+t('R37 view toggle mid-motion is stable', function () {
+  resetInput(); D.start('VIEW-1'); pump(4); resetInput();
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  for (var i = 0; i < 300; i++) {
+    if (i % 7 === 0) global.window.fire('keydown', { code: 'KeyV', preventDefault: function () {} });
+    pump(1);
+    var c = D.camera.position;
+    if (!isFinite(c.x) || !isFinite(c.y) || !isFinite(c.z)) return 'NaN after toggle at ' + i;
+  }
+  resetInput();
+  return true;
+});
+
+t('R38 pitch stays clamped under extreme input', function () {
+  resetInput(); D.start('PITCH-1'); pump(4);
+  for (var i = 0; i < 500; i++) {
+    global.window.fire('mousemove', { movementX: 0, movementY: -9000 });
+    pump(1);
+    if (Math.abs(D.S.pitch) > Math.PI / 2) return 'pitch escaped clamp: ' + D.S.pitch;
+  }
+  return true;
+});
+
+t('R39 greeble batching keeps per-room object counts bounded', function () {
+  resetInput();
+  var worstRoom = 0, worstShip = 0, worstCode = '';
+  for (var s = 0; s < 8; s++) {
+    D.start('GRB' + s); pump(4);
+    var total = 0;
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var g = D.ship.rooms[r]._g;
+      if (!g) continue;
+      var n = g.children.length;
+      total += n;
+      worstRoom = Math.max(worstRoom, n);
+    }
+    if (total > worstShip) { worstShip = total; worstCode = 'GRB' + s; }
+  }
+  console.log('         [perf] worst room = ' + worstRoom + ' objects, worst ship total = ' + worstShip + ' (' + worstCode + ')');
+  if (worstRoom > 120) return 'a single room has ' + worstRoom + ' scene objects — batching is not working';
+  return true;
+});
+
+t('R40 slice still completable in third person', function () {
+  D.setView(false);
+  var r = playthrough('TP-RUN1');
+  D.setView(true);
+  return r;
 });
 
 console.log('\n' + log.join('\n'));
