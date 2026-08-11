@@ -8,7 +8,12 @@ V3.prototype.copy = function (v) { this.x = v.x; this.y = v.y; this.z = v.z; ret
 V3.prototype.setScalar = function (s) { this.x = this.y = this.z = s; return this; };
 V3.prototype.multiplyScalar = function (s) { this.x *= s; this.y *= s; this.z *= s; return this; };
 V3.prototype.clone = function () { return new V3(this.x, this.y, this.z); };
-V3.prototype.normalize = function () { var l = Math.hypot(this.x, this.y, this.z) || 1; this.x /= l; this.y /= l; this.z /= l; return this; };
+V3.prototype.normalize = function () {
+  var l = Math.hypot(this.x, this.y, this.z);
+  if (!isFinite(l)) throw new Error('normalize of non-finite vector');
+  if (l === 0) l = 1;
+  this.x /= l; this.y /= l; this.z /= l; return this;
+};
 
 function Col(hex) { this.hex = hex || 0xffffff; }
 Col.prototype.setHex = function (h) { this.hex = h; return this; };
@@ -85,6 +90,7 @@ THREE.Matrix4 = function () {
     if (!isFinite(p.x) || !isFinite(p.y) || !isFinite(p.z)) throw new Error('compose: non-finite position');
     if (!isFinite(s.x) || !isFinite(s.y) || !isFinite(s.z)) throw new Error('compose: non-finite scale');
     if (s.x === 0 || s.y === 0 || s.z === 0) throw new Error('compose: zero scale');
+    if (Math.abs(s.y) > 1e4) throw new Error('compose: absurd scale ' + s.y);
     for (var i = 0; i < 16; i++) this.elements[i] = 0;
     this.elements[0] = s.x; this.elements[5] = s.y; this.elements[10] = s.z;
     this.elements[12] = p.x; this.elements[13] = p.y; this.elements[14] = p.z; this.elements[15] = 1;
@@ -94,6 +100,15 @@ THREE.Matrix4 = function () {
 THREE.Quaternion = function () {
   this.setFromEuler = function (e) {
     if (!isFinite(e.x) || !isFinite(e.y) || !isFinite(e.z)) throw new Error('quaternion from non-finite euler');
+    return this;
+  };
+  this.setFromUnitVectors = function (a, b) {
+    if (!a || !b) throw new Error('setFromUnitVectors with missing vector');
+    [a, b].forEach(function (v) {
+      if (!isFinite(v.x) || !isFinite(v.y) || !isFinite(v.z)) throw new Error('setFromUnitVectors: non-finite vector');
+    });
+    var lb = Math.hypot(b.x, b.y, b.z);
+    if (!(lb > 0.9 && lb < 1.1)) throw new Error('setFromUnitVectors: target not normalised (len ' + lb.toFixed(3) + ')');
     return this;
   };
 };
@@ -1154,6 +1169,119 @@ t('R61 every room has an unobstructed doorway gap in its hull', function () {
     }
   }
   return true;
+});
+
+
+/* ---------- BUILD 05: INSECT MODELS ---------- */
+t('R62 every enemy kind builds without throwing', function () {
+  resetInput(); D.start('BUG-01'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  var seen = {};
+  for (var f = 0; f < 6000; f++) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    /* hold hot voidglass so alert stays high enough for stalkers */
+    while (D.S.crystals.length < 6) D.S.crystals.push({ t: 0 });
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) seen[D.enemies[e].kind] = 1;
+  }
+  var want = ['skitter', 'clinger', 'bloater', 'stalker'];
+  var missing = want.filter(function (k) { return !seen[k]; });
+  return missing.length === 0 || 'never spawned: ' + missing.join(',');
+});
+
+t('R63 leg rig produces finite transforms for every enemy every frame', function () {
+  resetInput(); D.start('BUG-02'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  for (var f = 0; f < 3000; f++) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) {
+      var EN = D.enemies[e];
+      if (!EN.legMesh) return EN.kind + ' has no leg rig';
+      if (EN.legMesh.count !== 12) return EN.kind + ' leg count ' + EN.legMesh.count;
+      for (var i = 0; i < 12; i++) if (!EN.legMesh._set[i]) return EN.kind + ' leg segment ' + i + ' never placed';
+      if (!isFinite(EN.body.rotation.x)) return 'non-finite body pitch on ' + EN.kind;
+    }
+  }
+  return true;
+});
+
+t('R64 mandibles open during the wind-up and close otherwise', function () {
+  resetInput(); D.start('BUG-03'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var spot = clearSpot();
+  var openMax = -9, restMax = -9, sawWind = false;
+  for (var f = 0; f < 4000; f++) {
+    D.player.pos.x = spot.x; D.player.pos.z = spot.z;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) {
+      var EN = D.enemies[e];
+      if (EN.mandFlare === undefined) return EN.kind + ' has no mandible rig';
+      if (!EN.mandMesh || EN.mandMesh.count !== 4) return EN.kind + ' mandibles not batched';
+      if (EN.wind > 0) { sawWind = true; openMax = Math.max(openMax, EN.mandFlare); }
+      else if (EN.lunge <= 0) restMax = Math.max(restMax, EN.mandFlare);
+    }
+  }
+  if (!sawWind) return 'no wind-up observed - inconclusive';
+  return openMax > restMax + 0.15 || 'mandibles barely move (open ' + openMax.toFixed(2) + ' vs rest ' + restMax.toFixed(2) + ')';
+});
+
+t('R65 bloater sac swells and brightens as the player closes', function () {
+  resetInput(); D.start('BUG-04'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  var spot = clearSpot(), bloat = null;
+  for (var f = 0; f < 6000 && !bloat; f++) {
+    D.player.pos.x = spot.x; D.player.pos.z = spot.z;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) if (D.enemies[e].kind === 'bloater') { bloat = D.enemies[e]; break; }
+  }
+  if (!bloat) return 'no bloater ever spawned';
+  /* measure the sac directly rather than waiting on pathfinding */
+  D.player.pos.x = bloat.pos.x + 30; D.player.pos.z = bloat.pos.z + 30;
+  D.give('invuln', 9999); pump(2);
+  var farGlow = bloat.abd.material.emissiveIntensity, farScale = bloat.abd.scale.x;
+  D.player.pos.x = bloat.pos.x + 3.6; D.player.pos.z = bloat.pos.z;
+  D.give('invuln', 9999); pump(2);
+  var nearGlow = bloat.abd.material.emissiveIntensity, nearScale = bloat.abd.scale.x;
+  console.log('         [bloater] sac glow ' + farGlow.toFixed(2) + ' -> ' + nearGlow.toFixed(2) +
+              ', swell ' + farScale.toFixed(2) + ' -> ' + nearScale.toFixed(2));
+  if (!(nearGlow > farGlow)) return 'sac does not brighten (' + farGlow.toFixed(2) + ' -> ' + nearGlow.toFixed(2) + ')';
+  return nearScale > farScale || 'sac does not swell (' + farScale.toFixed(2) + ' -> ' + nearScale.toFixed(2) + ')';
+});
+
+t('R66 enemy draw calls stay within budget at the flood cap', function () {
+  resetInput(); D.start('BUG-05'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  var peakMeshes = 0, peakEnemies = 0;
+  for (var f = 0; f < 4000; f++) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    var total = 0;
+    for (var e = 0; e < D.enemies.length; e++) {
+      var n = 0;
+      (function walk(o) {
+        if (o._type === 'Mesh' || o._type === 'InstancedMesh') n++;
+        for (var i = 0; i < o.children.length; i++) walk(o.children[i]);
+      })(D.enemies[e].g);
+      total += n;
+    }
+    if (D.enemies.length > peakEnemies) { peakEnemies = D.enemies.length; }
+    peakMeshes = Math.max(peakMeshes, total);
+  }
+  var per = peakEnemies ? (peakMeshes / peakEnemies) : 0;
+  console.log('         [creatures] ' + peakEnemies + ' at peak, ' + peakMeshes + ' draw calls total (' + per.toFixed(1) + ' per creature)');
+  return per <= 11 || per.toFixed(1) + ' draw calls per creature - batching is not working';
+});
+
+t('R67 slice still completable with the new creature rig', function () {
+  var fails = [];
+  for (var i = 0; i < 6; i++) {
+    var r = playthrough('BUGRUN' + i);
+    if (r !== true) fails.push('BUGRUN' + i + ': ' + r);
+  }
+  return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
 });
 
 console.log('\n' + log.join('\n'));
