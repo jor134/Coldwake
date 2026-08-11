@@ -915,25 +915,40 @@ t('R49 enemies telegraph before striking - no instant contact damage', function 
   resetInput(); D.start('TELE-01'); pump(4); resetInput();
   D.setKey('N0'); D.setKey('N1');
   var spot = clearSpot();
-  var instant = 0, strikes = 0;
-  for (var f = 0; f < 4000; f++) {
+  var trials = 0, untelegraphed = 0;
+  for (var f = 0; f < 6000 && trials < 15; f++) {
     D.player.pos.x = spot.x; D.player.pos.z = spot.z;
-    D.give('hp', 100); D.give('invuln', 0);
-    var before = [];
-    for (var e = 0; e < D.enemies.length; e++) before.push(D.enemies[e].wind);
-    var hp0 = D.S.hp;
+    D.give('hp', 100); D.give('invuln', 9999);
     pump(1);
-    if (D.S.hp < hp0) {
-      strikes++;
-      /* a strike must have been preceded by a wind-up on some enemy */
-      var hadWind = false;
-      for (var b = 0; b < before.length; b++) if (before[b] > 0) hadWind = true;
-      if (!hadWind) instant++;
+    /* pick an isolated enemy so only its bite can be responsible */
+    var pick = null;
+    for (var e = 0; e < D.enemies.length; e++) {
+      var EN = D.enemies[e];
+      if (EN.wind > 0 || EN.T.boom) continue;
+      var lonely = true;
+      for (var o = 0; o < D.enemies.length; o++) {
+        if (o === e) continue;
+        if (Math.hypot(D.enemies[o].pos.x - EN.pos.x, D.enemies[o].pos.z - EN.pos.z) < 14) { lonely = false; break; }
+      }
+      if (lonely) { pick = EN; break; }
     }
+    if (!pick) continue;
+    /* stand right in front of it and watch what happens, frame by frame */
+    D.player.pos.x = pick.pos.x; D.player.pos.z = pick.pos.z + pick.T.range * 0.7;
+    D.resolve(D.player.pos, D.PLR_R);
+    trials++;
+    var sawWind = false, hurt = false;
+    for (var k = 0; k < 45 && !hurt; k++) {
+      D.give('hp', 100); D.give('invuln', 0);
+      if (pick.wind > 0) sawWind = true;
+      pump(1);
+      if (D.S.hp < 100) hurt = true;
+    }
+    if (hurt && !sawWind) untelegraphed++;
   }
-  if (!strikes) return 'no strikes observed - test inconclusive';
-  console.log('         [combat] ' + strikes + ' strikes observed, ' + instant + ' without a telegraph');
-  return instant === 0 || instant + '/' + strikes + ' strikes landed with no wind-up';
+  if (!trials) return 'no isolated enemy ever available - inconclusive';
+  console.log('         [combat] ' + trials + ' point-blank trials, ' + untelegraphed + ' bites with no wind-up');
+  return untelegraphed === 0 || untelegraphed + '/' + trials + ' bites landed with no telegraph';
 });
 
 t('R50 wind-up is long enough to react to', function () {
@@ -991,9 +1006,11 @@ t('R52 tutorial advances through every step and completes', function () {
   var guard = 0;
   while (!TG.dead && guard++ < 400) {
   var TGr = D.ship.rooms[0];
-  var ax = TGr.cx + (TG.x - TGr.cx) * 0.35, az = TGr.cz + (TG.z - TGr.cz) * 0.35;
-  D.player.pos.x = ax; D.player.pos.z = az;
-  D.S.yaw = Math.atan2(TG.x - ax, TG.z - az) + Math.PI;
+  var bx = TG.x - TGr.cx, bz = TG.z - TGr.cz, bl = Math.hypot(bx, bz) || 1;
+  var ax = TG.x - (bx / bl) * 3.4, az = TG.z - (bz / bl) * 3.4;
+  var ap = { x: ax, z: az }; D.resolve(ap, D.PLR_R);
+  D.player.pos.x = ap.x; D.player.pos.z = ap.z;
+  D.S.yaw = Math.atan2(TG.x - ap.x, TG.z - ap.z) + Math.PI;
   D.S.pitch = 0;
     getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
     pump(4);
@@ -1021,9 +1038,11 @@ t('R53 shooting the canister does not throw or damage the player', function () {
   var hp0 = D.S.hp;
   for (var i = 0; i < 200; i++) {
   var TGr = D.ship.rooms[0];
-  var ax = TGr.cx + (TG.x - TGr.cx) * 0.35, az = TGr.cz + (TG.z - TGr.cz) * 0.35;
-  D.player.pos.x = ax; D.player.pos.z = az;
-  D.S.yaw = Math.atan2(TG.x - ax, TG.z - az) + Math.PI;
+  var bx = TG.x - TGr.cx, bz = TG.z - TGr.cz, bl = Math.hypot(bx, bz) || 1;
+  var ax = TG.x - (bx / bl) * 3.4, az = TG.z - (bz / bl) * 3.4;
+  var ap = { x: ax, z: az }; D.resolve(ap, D.PLR_R);
+  D.player.pos.x = ap.x; D.player.pos.z = ap.z;
+  D.S.yaw = Math.atan2(TG.x - ap.x, TG.z - ap.z) + Math.PI;
   D.S.pitch = 0;
     getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
     pump(3);
@@ -1064,9 +1083,11 @@ t('R56 the firing path is actually live (guards against vacuous combat tests)', 
   var TG = D.targets[0];
   if (!TG) return 'no canister to shoot';
   var TGr = D.ship.rooms[0];
-  var ax = TGr.cx + (TG.x - TGr.cx) * 0.35, az = TGr.cz + (TG.z - TGr.cz) * 0.35;
-  D.player.pos.x = ax; D.player.pos.z = az;
-  D.S.yaw = Math.atan2(TG.x - ax, TG.z - az) + Math.PI;
+  var bx = TG.x - TGr.cx, bz = TG.z - TGr.cz, bl = Math.hypot(bx, bz) || 1;
+  var ax = TG.x - (bx / bl) * 3.4, az = TG.z - (bz / bl) * 3.4;
+  var ap = { x: ax, z: az }; D.resolve(ap, D.PLR_R);
+  D.player.pos.x = ap.x; D.player.pos.z = ap.z;
+  D.S.yaw = Math.atan2(TG.x - ap.x, TG.z - ap.z) + Math.PI;
   D.S.pitch = 0;
   var hp0 = TG.hp;
   getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
@@ -1282,6 +1303,177 @@ t('R67 slice still completable with the new creature rig', function () {
     if (r !== true) fails.push('BUGRUN' + i + ': ' + r);
   }
   return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
+});
+
+
+t('R68 flow field reaches every room from the player', function () {
+  for (var s2 = 0; s2 < 8; s2++) {
+    resetInput(); D.start('NAV' + s2); pump(4);
+    D.setKey('N0'); D.setKey('N1'); pump(6);
+    var fi = D.flowInfo;
+    if (!fi || !fi.walk) return 'no navigation grid built';
+    if (fi.src < 0) return 'no flow source on ship ' + s2;
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var R = D.ship.rooms[r];
+      /* sample a ring of points inside each room: at least one must be reachable */
+      var ok = false;
+      for (var k = 0; k < 24 && !ok; k++) {
+        var a = (k / 24) * Math.PI * 2, rr = R.rad * 0.45;
+        var x = R.cx + Math.sin(a) * rr, z = R.cz + Math.cos(a) * rr;
+        var i = Math.floor((x - fi.x0) / fi.cs), j = Math.floor((z - fi.z0) / fi.cs);
+        if (i < 0 || j < 0 || i >= fi.w || j >= fi.h) continue;
+        if (fi.flow[j * fi.w + i] >= 0) ok = true;
+      }
+      if (!ok) return 'room ' + r + ' unreachable by the flow field on ship ' + s2;
+    }
+  }
+  return true;
+});
+
+t('R69 enemies reach a player in another room', function () {
+  resetInput(); D.start('NAV-X1'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  var spot = clearSpot(), closest = 1e9;
+  for (var f = 0; f < 4000; f++) {
+    D.player.pos.x = spot.x; D.player.pos.z = spot.z;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) {
+      closest = Math.min(closest, Math.hypot(D.enemies[e].pos.x - spot.x, D.enemies[e].pos.z - spot.z));
+    }
+  }
+  console.log('         [nav] closest approach across rooms: ' + closest.toFixed(2) + ' units');
+  return closest < 2.5 || 'enemies never crossed to the player, closest ' + closest.toFixed(2);
+});
+
+t('R70 most enemies that spawn actually reach the player', function () {
+  resetInput(); D.start('NAV-X2'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  var spot = clearSpot();
+  var seen = {}, uid = 0;
+  for (var f = 0; f < 6000; f++) {
+    D.player.pos.x = spot.x; D.player.pos.z = spot.z;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    for (var e = 0; e < D.enemies.length; e++) {
+      var EN = D.enemies[e];
+      if (EN.__uid === undefined) EN.__uid = ++uid;
+      var d = Math.hypot(EN.pos.x - spot.x, EN.pos.z - spot.z);
+      var rec = seen[EN.__uid] || (seen[EN.__uid] = { start: d, best: d, frames: 0 });
+      rec.best = Math.min(rec.best, d);
+      rec.frames++;
+    }
+  }
+  /* only judge enemies that spawned far away and lived long enough to walk in */
+  var tried = 0, arrived = 0;
+  for (var k in seen) {
+    var r = seen[k];
+    if (r.start < 6 || r.frames < 240) continue;   /* needs 8s of life */
+    tried++;
+    if (r.best < 3.0) arrived++;
+  }
+  if (!tried) return 'no long-lived distant spawns observed - inconclusive';
+  var rate = arrived / tried;
+  console.log('         [nav] ' + arrived + '/' + tried + ' distant spawns reached the player (' + (rate * 100).toFixed(0) + '%)');
+  return rate > 0.6 || 'only ' + (rate * 100).toFixed(0) + '% of enemies found their way to the player';
+});
+
+
+/* ---------- BUILD 06: SIGHTLINES ---------- */
+t('R71 you can SEE down every corridor from inside the room', function () {
+  /* The bug this exists to catch: hull rendered as one solid cylinder, so the
+     doorway existed in collision only and every corridor looked like a wall. */
+  var blind = 0, total = 0, first = null;
+  for (var s2 = 0; s2 < 8; s2++) {
+    resetInput(); D.start('SIGHT' + s2); pump(4);
+    D.setKey('N0'); D.setKey('N1'); pump(4);
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var R = D.ship.rooms[r];
+      for (var l = 0; l < R.links.length; l++) {
+        var B = D.ship.rooms[R.links[l].to];
+        var dx = B.gx - R.gx, dz = B.gy - R.gy;
+        total++;
+        /* Stand on the doorway axis inside the room, at eye height. Try a few
+           set-back distances and take the best: a prop right at one probe point
+           is a prop, not a walled-off doorway. */
+        var best = 0, needed = 0;
+        for (var b = 0; b < 4; b++) {
+          var back = R.rad * (0.2 + b * 0.14);
+          var ox = R.cx - dx * back, oz = R.cz - dz * back;
+          if (D.hitsWall(ox, oz, 0.6)) continue;           /* probe point itself blocked */
+          var t = D.rayWorld(ox, 1.72, oz, dx, 0, dz, 90);
+          var need = back + R.rad + 1.0;
+          if (t - need > best - needed) { best = t; needed = need; }
+        }
+        if (needed === 0) { total--; continue; }             /* no valid probe point */
+        if (best < needed) {
+          blind++;
+          if (!first) first = 'ship ' + s2 + ' room ' + r + ': view stops at ' + best.toFixed(1) + ', hull edge at ' + needed.toFixed(1);
+        }
+      }
+    }
+  }
+  return blind === 0 || blind + '/' + total + ' doorways are visually walled off — ' + first;
+});
+
+t('R72 you can see from one room through a corridor into the next', function () {
+  var blind = 0, total = 0;
+  for (var s2 = 0; s2 < 6; s2++) {
+    resetInput(); D.start('SEE' + s2); pump(4);
+    D.setKey('N0'); D.setKey('N1'); pump(4);
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var R = D.ship.rooms[r];
+      for (var l = 0; l < R.links.length; l++) {
+        var B = D.ship.rooms[R.links[l].to];
+        var dx = B.gx - R.gx, dz = B.gy - R.gy;
+        var span = Math.hypot(B.cx - R.cx, B.cz - R.cz);
+        total++;
+        /* from a clear spot near the room centre, can we see into the neighbour? */
+        var seen = false;
+        for (var b2 = 0; b2 < 5 && !seen; b2++) {
+          var off = (b2 - 2) * 1.1;
+          var ox2 = R.cx + (dz ? off : 0), oz2 = R.cz + (dx ? off : 0);
+          if (D.hitsWall(ox2, oz2, 0.6)) continue;
+          if (D.rayWorld(ox2, 1.72, oz2, dx, 0, dz, span + 30) >= span) seen = true;
+        }
+        if (!seen) blind++;
+      }
+    }
+  }
+  /* some blocking is fine — props and the far hull — but not most of them */
+  var rate = blind / total;
+  console.log('         [sight] ' + (total - blind) + '/' + total + ' room-to-room sightlines are open');
+  return rate < 0.25 || (rate * 100).toFixed(0) + '% of room-to-room sightlines are blocked';
+});
+
+t('R73 the hull is still sealed after being cut open for sightlines', function () {
+  resetInput(); D.start('SEAL-01'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var leaks = 0;
+  for (var trial = 0; trial < 5000; trial++) {
+    var R = D.ship.rooms[trial % D.ship.rooms.length];
+    var a = Math.random() * Math.PI * 2;
+    var p = { x: R.cx + Math.sin(a) * (R.rad - 2.5), z: R.cz + Math.cos(a) * (R.rad - 2.5) };
+    if (D.hitsWall(p.x, p.z, D.PLR_R)) continue;
+    D.moveCircle(p, Math.sin(a) * 60, Math.cos(a) * 60, D.PLR_R);
+    if (!inPlayableSpace(p.x, p.z)) leaks++;
+  }
+  return leaks === 0 || leaks + ' hull leaks after the sightline cuts';
+});
+
+t('R74 player never spawns in a sealed pocket', function () {
+  for (var s2 = 0; s2 < 14; s2++) {
+    resetInput(); D.start('SPAWN' + s2); pump(6);
+    var mc = D.mainComponent(), fi = D.flowInfo;
+    var i = Math.floor((D.player.pos.x - fi.x0) / fi.cs);
+    var j = Math.floor((D.player.pos.z - fi.z0) / fi.cs);
+    if (i < 0 || j < 0 || i >= fi.w || j >= fi.h) return 'spawn off-grid on ship ' + s2;
+    var c = j * fi.w + i;
+    if (!fi.walk[c]) return 'spawn on an unwalkable cell on ship ' + s2;
+    if (mc.comp[c] !== mc.best) return 'spawn is in an isolated pocket on ship ' + s2;
+    if (D.hitsWall(D.player.pos.x, D.player.pos.z, D.PLR_R * 1.4)) return 'spawn is cramped on ship ' + s2;
+  }
+  return true;
 });
 
 console.log('\n' + log.join('\n'));
