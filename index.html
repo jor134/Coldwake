@@ -139,7 +139,7 @@ body.touch .stick,body.touch #fireBtn{display:block}
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 03</div>
+  <div class="sub">VERTICAL SLICE · BUILD 04</div>
   <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
   <div>
@@ -651,6 +651,7 @@ var $ = function (id) { return document.getElementById(id); };
 
 /* ---- constants ---- */
 var DOOR_W = 7, WALL_H = 7.2, WALL_T = 1, PLR_R = 0.8, ENEMY_CAP = 20;
+var TUBE_R = 5.0, TUBE_Y = 3.5, DOME_H = 4.2;
 var EYE = 1.72, SPEED = 8.6, SPRINT = 13.4, LIGHT_POOL = 7;
 var TP_DIST = 4.6, TP_SIDE = 1.15, TP_UP = 0.42;
 
@@ -778,6 +779,33 @@ function initGeo() {
   GEO.elbow = new THREE.SphereGeometry(1, 8, 6);
   GEO.bolt = new THREE.CylinderGeometry(1, 1, 1, 6);
   GEO.box = new THREE.BoxGeometry(1, 1, 1);
+  /* open-ended shells and arcs for curved hull work */
+  GEO.shell = new THREE.CylinderGeometry(1, 1, 1, 40, 1, true);
+  GEO.tube = new THREE.CylinderGeometry(1, 1, 1, 22, 1, true);
+  GEO.dome = new THREE.SphereGeometry(1, 32, 12, 0, Math.PI * 2, 0, Math.PI / 2);
+  GEO.disc = new THREE.CircleGeometry(1, 40);
+  GEO.ringRib = new THREE.TorusGeometry(1, 0.035, 6, 34);
+  GEO.tubeRib = new THREE.TorusGeometry(1, 0.05, 6, 22);
+  GEO.arcPanel = new THREE.CylinderGeometry(1, 1, 1, 5, 1, true, 0, 0.30);
+  GEO.arcPipe = new THREE.TorusGeometry(1, 0.02, 5, 26, 0.55);
+}
+/* uniform point inside a room's circular footprint */
+function polarIn(R, rnd, frac) {
+  var rad = R.rad * (frac === undefined ? 0.7 : frac) * Math.sqrt(rnd());
+  var a = rnd() * Math.PI * 2;
+  return { x: R.cx + Math.sin(a) * rad, z: R.cz + Math.cos(a) * rad, a: a, rad: rad };
+}
+function roomGaps(R) {
+  var gaps = [];
+  for (var l = 0; l < R.links.length; l++) {
+    var B = ship.rooms[R.links[l].to], d = dirOf(R, B);
+    /* Gap must be NARROWER than the corridor mouth it serves. Wider leaves a
+       sliver either side that a zero-radius ray slips through into space, even
+       though a 0.8-radius player is stopped by the corridor walls. */
+    var half = Math.asin(Math.min(0.92, (DOOR_W / 2 - 0.2) / R.rad));
+    gaps.push({ a: Math.atan2(d.x, d.z), half: half });
+  }
+  return gaps;
 }
 
 /* ================= INSTANCED GREEBLE BATCHER ================= */
@@ -802,11 +830,31 @@ Batch.prototype.build = function (parent) {
 };
 
 /* ================= COLLISION ================= */
-function addBox(x0, x1, z0, z1, h, door) {
+/* Circular hull section with angular doorway gaps. Rooms are cylinders now, so
+   the player is constrained INSIDE a shell rather than outside a box. */
+function addRing(cx, cz, R, h, gaps) {
+  var c = { type: 'ring', cx: cx, cz: cz, R: R, h: h === undefined ? WALL_H : h, gaps: gaps || [], active: true, door: null };
+  colliders.push(c); return c;
+}
+function angDiff(a, b) {
+  var d = a - b;
+  while (d > Math.PI) d -= Math.PI * 2;
+  while (d < -Math.PI) d += Math.PI * 2;
+  return d;
+}
+function inGap(c, ang) {
+  for (var i = 0; i < c.gaps.length; i++) {
+    if (Math.abs(angDiff(ang, c.gaps[i].a)) < c.gaps[i].half) return true;
+  }
+  return false;
+}
+function addBox(x0, x1, z0, z1, h, door, y0) {
   var c = {
+    type: 'box',
     x0: Math.min(x0, x1), x1: Math.max(x0, x1),
     z0: Math.min(z0, z1), z1: Math.max(z0, z1),
-    h: h === undefined ? WALL_H : h, active: true, door: door || null
+    h: h === undefined ? WALL_H : h, y0: y0 === undefined ? 0 : y0,
+    active: true, door: door || null
   };
   colliders.push(c); return c;
 }
@@ -814,6 +862,13 @@ function hitsWall(x, z, r) {
   for (var i = 0; i < colliders.length; i++) {
     var c = colliders[i];
     if (!c.active) continue;
+    if (c.type === 'ring') {
+      var rx = x - c.cx, rz = z - c.cz, rd = Math.hypot(rx, rz);
+      if (rd < c.R - r || rd > c.R + r) continue;          /* clear of the shell band */
+      if (inGap(c, Math.atan2(rx, rz))) continue;          /* doorway */
+      return c;
+    }
+    if (c.y0 > 0.1 || c.h <= 0.1) continue;   /* ceiling / floor slabs are ray-only */
     if (x + r < c.x0 || x - r > c.x1 || z + r < c.z0 || z - r > c.z1) continue;
     var cx = Math.max(c.x0, Math.min(x, c.x1)), cz = Math.max(c.z0, Math.min(z, c.z1));
     var dx = x - cx, dz = z - cz;
@@ -827,6 +882,17 @@ function resolve(p, r) {
     for (var i = 0; i < colliders.length; i++) {
       var c = colliders[i];
       if (!c.active) continue;
+      if (c.type === 'ring') {
+        var rx = p.x - c.cx, rz = p.z - c.cz, rd = Math.hypot(rx, rz);
+        if (rd < c.R - r || rd > c.R + r) continue;
+        if (inGap(c, Math.atan2(rx, rz))) continue;
+        if (rd < 1e-5) continue;
+        /* push to whichever side of the shell is nearer */
+        var want = (rd < c.R) ? (c.R - r) : (c.R + r);
+        p.x = c.cx + rx / rd * want; p.z = c.cz + rz / rd * want;
+        moved = true; continue;
+      }
+      if (c.y0 > 0.1 || c.h <= 0.1) continue;
       if (p.x + r < c.x0 || p.x - r > c.x1 || p.z + r < c.z0 || p.z - r > c.z1) continue;
       var cx = Math.max(c.x0, Math.min(p.x, c.x1)), cz = Math.max(c.z0, Math.min(p.z, c.z1));
       var dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;
@@ -870,19 +936,43 @@ function rayBox(ox, oy, oz, dx, dy, dz, c, maxT) {
   if (Math.abs(dx) < 1e-8) { if (ox < c.x0 || ox > c.x1) return -1; }
   else { inv = 1 / dx; lo = (c.x0 - ox) * inv; hi = (c.x1 - ox) * inv; if (lo > hi) { var t = lo; lo = hi; hi = t; } t0 = Math.max(t0, lo); t1 = Math.min(t1, hi); if (t0 > t1) return -1; }
   /* y */
-  if (Math.abs(dy) < 1e-8) { if (oy < 0 || oy > c.h) return -1; }
-  else { inv = 1 / dy; lo = (0 - oy) * inv; hi = (c.h - oy) * inv; if (lo > hi) { var t2 = lo; lo = hi; hi = t2; } t0 = Math.max(t0, lo); t1 = Math.min(t1, hi); if (t0 > t1) return -1; }
+  if (Math.abs(dy) < 1e-8) { if (oy < c.y0 || oy > c.h) return -1; }
+  else { inv = 1 / dy; lo = (c.y0 - oy) * inv; hi = (c.h - oy) * inv; if (lo > hi) { var t2 = lo; lo = hi; hi = t2; } t0 = Math.max(t0, lo); t1 = Math.min(t1, hi); if (t0 > t1) return -1; }
   /* z */
   if (Math.abs(dz) < 1e-8) { if (oz < c.z0 || oz > c.z1) return -1; }
   else { inv = 1 / dz; lo = (c.z0 - oz) * inv; hi = (c.z1 - oz) * inv; if (lo > hi) { var t3 = lo; lo = hi; hi = t3; } t0 = Math.max(t0, lo); t1 = Math.min(t1, hi); if (t0 > t1) return -1; }
   return t0 >= 0 ? t0 : (t1 >= 0 ? 0 : -1);
+}
+function rayRing(ox, oy, oz, dx, dy, dz, c, maxT) {
+  var px = ox - c.cx, pz = oz - c.cz;
+  var a = dx * dx + dz * dz;
+  if (a < 1e-9) return -1;
+  var b = 2 * (px * dx + pz * dz);
+  var cc = px * px + pz * pz - c.R * c.R;
+  var disc = b * b - 4 * a * cc;
+  if (disc < 0) return -1;
+  var sq = Math.sqrt(disc);
+  var t0 = (-b - sq) / (2 * a), t1 = (-b + sq) / (2 * a);
+  var cand = [t0, t1];
+  for (var k = 0; k < 2; k++) {
+    var t = cand[k];
+    if (t < 0 || t > maxT) continue;
+    var y = oy + dy * t;
+    if (y < 0 || y > c.h) continue;
+    var hx = px + dx * t, hz = pz + dz * t;
+    if (inGap(c, Math.atan2(hx, hz))) continue;
+    return t;
+  }
+  return -1;
 }
 function rayWorld(ox, oy, oz, dx, dy, dz, maxT) {
   var best = maxT;
   for (var i = 0; i < colliders.length; i++) {
     var c = colliders[i];
     if (!c.active) continue;
-    var t = rayBox(ox, oy, oz, dx, dy, dz, c, best);
+    var t = (c.type === 'ring')
+      ? rayRing(ox, oy, oz, dx, dy, dz, c, best)
+      : rayBox(ox, oy, oz, dx, dy, dz, c, best);
     if (t >= 0 && t < best) best = t;
   }
   return best;
@@ -891,7 +981,17 @@ function pointSolid(x, y, z) {
   for (var i = 0; i < colliders.length; i++) {
     var c = colliders[i];
     if (!c.active) continue;
-    if (x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1 && y > 0 && y < c.h) return true;
+    if (c.type === 'ring') {
+      /* anything at or beyond the hull radius is inside the wall or outside the
+         ship — either way the camera must not sit there */
+      var rx = x - c.cx, rz = z - c.cz, rd = Math.hypot(rx, rz);
+      if (rd < c.R - 0.05) continue;
+      if (rd > c.R + 3.0) continue;
+      if (y < 0 || y > c.h) continue;
+      if (inGap(c, Math.atan2(rx, rz))) continue;
+      return true;
+    }
+    if (x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1 && y > c.y0 && y < c.h) return true;
   }
   return false;
 }
@@ -913,27 +1013,26 @@ function buildWorld() {
   colliders = []; roomGroups = []; doors = []; pickups = []; nodeObjs = []; lightAnchors = []; targets = [];
   var built = {};
   var rnd = CW.rng(CW.hash(ship.code + 'geo'));
+  for (var pr = 0; pr < ship.rooms.length; pr++) ship.rooms[pr].rad = (ship.rooms[pr].w + ship.rooms[pr].d) / 4;
 
   for (var i = 0; i < ship.rooms.length; i++) {
     var R = ship.rooms[i];
     var sec = CW.SECTORS[R.role] || CW.SECTORS.SPINE;
     var G = new THREE.Group(); world.add(G); roomGroups.push(G);
     R._g = G;
+    R.rad = (R.w + R.d) / 4;
     buildRoomShell(G, R, sec, rnd);
     buildRoomDetail(G, R, sec, rnd);
     buildVents(G, R, rnd);
     for (var n = 0; n < R.nodes.length; n++) buildNode(G, R, R.nodes[n], sec);
     for (var sc = 0; sc < R.scrap.length; sc++) {
-      var px = R.cx + (rnd() - 0.5) * (R.w - 6), pz = R.cz + (rnd() - 0.5) * (R.d - 6);
-      buildPickup(G, R.scrap[sc].type, px, pz);
+      var ps = polarIn(R, rnd, 0.74); buildPickup(G, R.scrap[sc].type, ps.x, ps.z);
     }
     for (var cr = 0; cr < R.crystals.length; cr++) {
-      var qx = R.cx + (rnd() - 0.5) * (R.w - 6), qz = R.cz + (rnd() - 0.5) * (R.d - 6);
-      buildPickup(G, 'crystal', qx, qz);
+      var qs = polarIn(R, rnd, 0.74); buildPickup(G, 'crystal', qs.x, qs.z);
     }
     for (var mk = 0; mk < (R.medkits || []).length; mk++) {
-      var mx = R.cx + (rnd() - 0.5) * (R.w - 7), mz = R.cz + (rnd() - 0.5) * (R.d - 7);
-      buildPickup(G, 'medkit', mx, mz);
+      var ms = polarIn(R, rnd, 0.68); buildPickup(G, 'medkit', ms.x, ms.z);
     }
     if (R.role === 'CRYOBAY') buildBench(G, R);
     for (var l2 = 0; l2 < R.links.length; l2++) {
@@ -943,228 +1042,174 @@ function buildWorld() {
       buildCorridor(G, R, B, sec, rnd);
     }
   }
+  /* deck pan under the whole vessel, so downward shots stop at the floor */
+  var ext = CFG.CELL * CFG.GRID;
+  addBox(-ext, ext, -ext, ext, 0, null, -60);
+
   buildDoors();
   buildLightPool();
   if (ship.rooms[ship.reactorRoom]) buildBoss(ship.rooms[ship.reactorRoom]);
 }
 
-/* ---- shell: floor, ceiling, walls with door gaps ---- */
+/* ---- shell: circular deck, cylindrical hull, domed overhead ---- */
 function buildRoomShell(G, R, sec, rnd) {
-  var hw = R.w / 2, hd = R.d / 2;
+  var rad = R.rad;
 
-  var fl = new THREE.Mesh(new THREE.BoxGeometry(R.w, 0.5, R.d), MAT.floor);
-  fl.position.set(R.cx, -0.25, R.cz); G.add(fl);
+  /* deck */
+  var fl = new THREE.Mesh(GEO.disc, MAT.floor);
+  fl.rotation.x = -Math.PI / 2; fl.scale.set(rad, rad, 1);
+  fl.position.set(R.cx, 0, R.cz); G.add(fl);
 
-  var ce = new THREE.Mesh(new THREE.BoxGeometry(R.w + 2, 0.5, R.d + 2), MAT.ceil);
-  ce.position.set(R.cx, WALL_H + 0.25, R.cz); G.add(ce);
+  /* hull shell, seen from the inside */
+  var hullMat = new THREE.MeshToonMaterial({
+    color: 0x323d49, gradientMap: gradMap, emissive: sec.fog,
+    emissiveIntensity: 0.55, side: THREE.BackSide
+  });
+  var shell = new THREE.Mesh(GEO.shell, hullMat);
+  shell.scale.set(rad, WALL_H, rad);
+  shell.position.set(R.cx, WALL_H / 2, R.cz); G.add(shell);
 
-  var wallMat = MAT.hull;
-  var sides = [
-    { d: { x: 1, z: 0 }, ax: 'z' }, { d: { x: -1, z: 0 }, ax: 'z' },
-    { d: { x: 0, z: 1 }, ax: 'x' }, { d: { x: 0, z: -1 }, ax: 'x' }
-  ];
-  for (var s = 0; s < sides.length; s++) {
-    var sd = sides[s];
-    var hasLink = R.links.some(function (l) {
-      var B = ship.rooms[l.to], dd = dirOf(R, B);
-      return dd.x === sd.d.x && dd.z === sd.d.z;
-    });
-    if (sd.ax === 'z') {
-      var wx = R.cx + sd.d.x * (hw + WALL_T / 2);
-      var segs = hasLink ? [[R.cz - hd, R.cz - DOOR_W / 2], [R.cz + DOOR_W / 2, R.cz + hd]] : [[R.cz - hd, R.cz + hd]];
-      for (var q = 0; q < segs.length; q++) {
-        var len = segs[q][1] - segs[q][0]; if (len <= 0.05) continue;
-        var mz = (segs[q][0] + segs[q][1]) / 2;
-        var m = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, len), wallMat);
-        m.position.set(wx, WALL_H / 2, mz); G.add(m);
-        addBox(wx - WALL_T / 2, wx + WALL_T / 2, segs[q][0], segs[q][1]);
-      }
-      if (hasLink) {
-        var lin = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H - DOOR_W + 1.4, DOOR_W), wallMat);
-        lin.position.set(wx, WALL_H - (WALL_H - DOOR_W + 1.4) / 2, R.cz); G.add(lin);
-      }
-    } else {
-      var wz = R.cz + sd.d.z * (hd + WALL_T / 2);
-      var segs2 = hasLink ? [[R.cx - hw, R.cx - DOOR_W / 2], [R.cx + DOOR_W / 2, R.cx + hw]] : [[R.cx - hw, R.cx + hw]];
-      for (var q2 = 0; q2 < segs2.length; q2++) {
-        var len2 = segs2[q2][1] - segs2[q2][0]; if (len2 <= 0.05) continue;
-        var mx = (segs2[q2][0] + segs2[q2][1]) / 2;
-        var m2 = new THREE.Mesh(new THREE.BoxGeometry(len2, WALL_H, WALL_T), wallMat);
-        m2.position.set(mx, WALL_H / 2, wz); G.add(m2);
-        addBox(segs2[q2][0], segs2[q2][1], wz - WALL_T / 2, wz + WALL_T / 2);
-      }
-      if (hasLink) {
-        var lin2 = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W, WALL_H - DOOR_W + 1.4, WALL_T), wallMat);
-        lin2.position.set(R.cx, WALL_H - (WALL_H - DOOR_W + 1.4) / 2, wz); G.add(lin2);
-      }
-    }
-  }
-  lightAnchors.push({ x: R.cx, y: WALL_H - 1.1, z: R.cz, color: sec.light, base: 1.15, room: R.id, ref: R });
+  /* domed overhead */
+  var domeMat = new THREE.MeshToonMaterial({
+    color: 0x232c37, gradientMap: gradMap, emissive: 0x070b10,
+    emissiveIntensity: 0.7, side: THREE.BackSide
+  });
+  var dome = new THREE.Mesh(GEO.dome, domeMat);
+  dome.scale.set(rad, DOME_H, rad);
+  dome.position.set(R.cx, WALL_H, R.cz); G.add(dome);
+
+  /* hull collision with a gap at every doorway */
+  addRing(R.cx, R.cz, rad, WALL_H + DOME_H, roomGaps(R));
+
+  lightAnchors.push({ x: R.cx, y: WALL_H + 0.6, z: R.cz, color: sec.light, base: 1.15, room: R.id, ref: R });
 }
 
-/* ---- detail: panels, pipes, cables, consoles, struts, grating, hazard stripes ---- */
+/* ---- detail: ribs, hull rings, curved panels, radial deck plating ---- */
 function buildRoomDetail(G, R, sec, rnd) {
-  var hw = R.w / 2, hd = R.d / 2;
-  var bPanel = new Batch(GEO.panel, MAT.panel);
-  var bPanelAlt = new Batch(GEO.panel, MAT.panelAlt);
-  var bPipe = new Batch(GEO.pipe, MAT.pipe);
-  var bPipeR = new Batch(GEO.pipe, MAT.pipeRust);
-  var bPipeC = new Batch(GEO.pipe, MAT.pipeCool);
-  var bElbow = new Batch(GEO.elbow, MAT.pipe);
-  var bCable = new Batch(GEO.pipeThin, MAT.cable);
+  var rad = R.rad, gaps = roomGaps(R);
+  function blocked(a, pad) {
+    for (var i = 0; i < gaps.length; i++) if (Math.abs(angDiff(a, gaps[i].a)) < gaps[i].half + (pad || 0)) return true;
+    return false;
+  }
+
+  var bRib = new Batch(GEO.box, MAT.strut);
+  var bPanel = new Batch(GEO.arcPanel, MAT.panel);
+  var bPanelAlt = new Batch(GEO.arcPanel, MAT.panelAlt);
+  var bPipeArc = new Batch(GEO.arcPipe, MAT.pipe);
+  var bPipeArcR = new Batch(GEO.arcPipe, MAT.pipeRust);
   var bBolt = new Batch(GEO.bolt, MAT.bolt);
-  var bStrut = new Batch(GEO.box, MAT.strut);
   var bGrate = new Batch(GEO.box, MAT.grate);
   var bHaz = new Batch(GEO.box, MAT.hazard);
   var bStrip = new Batch(GEO.box, MAT.strip);
+  var bCable = new Batch(GEO.pipeThin, MAT.cable);
   var btn = [new Batch(GEO.box, MAT.btnR), new Batch(GEO.box, MAT.btnG), new Batch(GEO.box, MAT.btnB), new Batch(GEO.box, MAT.btnY)];
-
   var HALF = Math.PI / 2;
 
-  /* --- wall dressing on each of the four walls --- */
-  var walls = [
-    { nx: 1, nz: 0, wx: R.cx + hw - 0.06, along: 'z', lo: R.cz - hd, hi: R.cz + hd, fixed: R.cx + hw, ry: HALF },
-    { nx: -1, nz: 0, wx: R.cx - hw + 0.06, along: 'z', lo: R.cz - hd, hi: R.cz + hd, fixed: R.cx - hw, ry: HALF },
-    { nx: 0, nz: 1, along: 'x', lo: R.cx - hw, hi: R.cx + hw, fixed: R.cz + hd, ry: 0 },
-    { nx: 0, nz: -1, along: 'x', lo: R.cx - hw, hi: R.cx + hw, fixed: R.cz - hd, ry: 0 }
-  ];
+  /* --- vertical hull ribs running up into the dome --- */
+  var nRib = Math.max(10, Math.round(rad * 1.5));
+  for (var i = 0; i < nRib; i++) {
+    var a = (i / nRib) * Math.PI * 2;
+    if (blocked(a, 0.06)) continue;
+    var sx = Math.sin(a), cz2 = Math.cos(a);
+    bRib.add(R.cx + sx * (rad - 0.2), WALL_H / 2, R.cz + cz2 * (rad - 0.2), 0.34, WALL_H, 0.5, 0, a, 0);
+    /* short kicker leaning into the dome */
+    bRib.add(R.cx + sx * (rad - 0.7), WALL_H + 0.9, R.cz + cz2 * (rad - 0.7), 0.3, 2.4, 0.4, cz2 * 0.32, a, -sx * 0.32);
+    /* foot bolt */
+    bBolt.add(R.cx + sx * (rad - 0.45), 0.12, R.cz + cz2 * (rad - 0.45), 0.11, 0.2, 0.11);
+  }
 
-  for (var w = 0; w < walls.length; w++) {
-    var W = walls[w], span = W.hi - W.lo;
-    var inward = W.along === 'z' ? -W.nx : -W.nz;
+  /* --- curved wall panels between the ribs --- */
+  var nPan = Math.max(12, Math.round(rad * 2.0));
+  for (var p = 0; p < nPan; p++) {
+    var pa = (p / nPan) * Math.PI * 2 + 0.09;
+    if (blocked(pa, 0.05)) continue;
+    var ph = 1.3 + rnd() * 2.3, py = 1.0 + rnd() * 3.0;
+    var B = rnd() < 0.5 ? bPanel : bPanelAlt;
+    B.add(R.cx, py, R.cz, rad - 0.12, ph, rad - 0.12, 0, pa, 0);
+  }
 
-    /* recessed panels in a run */
-    var pc = Math.max(2, Math.floor(span / 3.1));
-    for (var p = 0; p < pc; p++) {
-      var t = W.lo + (p + 0.5) * (span / pc);
-      if (Math.abs(t - (W.along === 'z' ? R.cz : R.cx)) < DOOR_W / 2 + 0.4) continue;
-      var ph = 1.1 + rnd() * 2.4, py = 0.9 + rnd() * 3.2, pw = (span / pc) * (0.62 + rnd() * 0.24);
-      var B = rnd() < 0.5 ? bPanel : bPanelAlt;
-      if (W.along === 'z') B.add(W.fixed + inward * 0.16, py, t, 0.22, ph, pw);
-      else B.add(t, py, W.fixed + inward * 0.16, pw, ph, 0.22);
-      /* corner bolts */
-      for (var bo = 0; bo < 4; bo++) {
-        var ox = (bo % 2 ? 1 : -1) * pw * 0.42, oy = (bo < 2 ? 1 : -1) * ph * 0.4;
-        if (W.along === 'z') bBolt.add(W.fixed + inward * 0.3, py + oy, t + ox, 0.07, 0.1, 0.07, 0, 0, HALF);
-        else bBolt.add(t + ox, py + oy, W.fixed + inward * 0.3, 0.07, 0.1, 0.07, 0, 0, HALF);
-      }
-    }
-
-    /* pipe runs at two heights, skipping the doorway */
-    var pipeYs = [1.35, 5.35, 6.25];
-    for (var pi = 0; pi < pipeYs.length; pi++) {
-      if (rnd() < 0.22) continue;
-      var py2 = pipeYs[pi];
-      var rad = 0.13 + rnd() * 0.14;
-      var PB = pi === 0 ? bPipeC : (rnd() < 0.35 ? bPipeR : bPipe);
-      var mid = W.along === 'z' ? R.cz : R.cx;
-      var runs = (py2 < 3) ? [[W.lo + 0.5, mid - DOOR_W / 2 - 0.6], [mid + DOOR_W / 2 + 0.6, W.hi - 0.5]] : [[W.lo + 0.5, W.hi - 0.5]];
-      for (var rr = 0; rr < runs.length; rr++) {
-        var a0 = runs[rr][0], a1 = runs[rr][1], L = a1 - a0;
-        if (L < 1.2) continue;
-        var ac = (a0 + a1) / 2;
-        if (W.along === 'z') {
-          PB.add(W.fixed + inward * (0.42 + rad), py2, ac, rad, L, rad, HALF, 0, 0);
-          bElbow.add(W.fixed + inward * (0.42 + rad), py2, a0, rad * 1.5, rad * 1.5, rad * 1.5);
-          bElbow.add(W.fixed + inward * (0.42 + rad), py2, a1, rad * 1.5, rad * 1.5, rad * 1.5);
-        } else {
-          PB.add(ac, py2, W.fixed + inward * (0.42 + rad), rad, L, rad, 0, 0, HALF);
-          bElbow.add(a0, py2, W.fixed + inward * (0.42 + rad), rad * 1.5, rad * 1.5, rad * 1.5);
-          bElbow.add(a1, py2, W.fixed + inward * (0.42 + rad), rad * 1.5, rad * 1.5, rad * 1.5);
-        }
-        /* brackets */
-        var nb = Math.max(1, Math.floor(L / 3.4));
-        for (var bk = 0; bk <= nb; bk++) {
-          var bt = a0 + (bk / nb) * L;
-          if (W.along === 'z') bStrut.add(W.fixed + inward * 0.24, py2, bt, 0.36, 0.16, 0.16);
-          else bStrut.add(bt, py2, W.fixed + inward * 0.24, 0.16, 0.16, 0.36);
-        }
-      }
-    }
-
-    /* cable bundles drooping under the ceiling */
-    if (rnd() < 0.8) {
-      var cy = 6.55, segsN = Math.max(2, Math.floor(span / 4.2));
-      for (var cs = 0; cs < segsN; cs++) {
-        var ca = W.lo + (cs / segsN) * span + 0.4, cb = W.lo + ((cs + 1) / segsN) * span - 0.4;
-        if (cb <= ca) continue;
-        var sag = 0.28 + rnd() * 0.34, mc = (ca + cb) / 2, half = (cb - ca) / 2;
-        var segLen = Math.hypot(half, sag), tilt = Math.atan2(sag, half);
-        for (var cc = 0; cc < 3; cc++) {
-          var off = (cc - 1) * 0.16, cr = 0.045 + rnd() * 0.03;
-          if (W.along === 'z') {
-            bCable.add(W.fixed + inward * (0.5 + off), cy - sag / 2, mc - half / 2, cr, segLen, cr, HALF - tilt, 0, 0);
-            bCable.add(W.fixed + inward * (0.5 + off), cy - sag / 2, mc + half / 2, cr, segLen, cr, HALF + tilt, 0, 0);
-          } else {
-            bCable.add(mc - half / 2, cy - sag / 2, W.fixed + inward * (0.5 + off), cr, segLen, cr, 0, 0, HALF + tilt);
-            bCable.add(mc + half / 2, cy - sag / 2, W.fixed + inward * (0.5 + off), cr, segLen, cr, 0, 0, HALF - tilt);
-          }
-        }
-      }
-    }
-
-    /* hazard chevrons flanking every doorway */
-    var hasDoor = R.links.some(function (l) {
-      var Bm = ship.rooms[l.to], dd = dirOf(R, Bm);
-      return dd.x === W.nx && dd.z === W.nz;
-    });
-    if (hasDoor) {
-      var mid2 = W.along === 'z' ? R.cz : R.cx;
-      for (var hz = 0; hz < 8; hz++) {
-        var side = hz < 4 ? -1 : 1, k = hz % 4;
-        var hpos = mid2 + side * (DOOR_W / 2 + 0.35 + k * 0.001);
-        var hy = 0.32 + k * 0.5;
-        if (W.along === 'z') bHaz.add(W.fixed + inward * 0.2, hy, hpos, 0.1, 0.34, 0.62, 0, 0, 0.5 * side);
-        else bHaz.add(hpos, hy, W.fixed + inward * 0.2, 0.62, 0.34, 0.1, 0.5 * side, 0, 0);
-      }
+  /* --- circumferential pipe runs, broken at the doorways --- */
+  var pipeY = [1.25, 4.9, 6.0];
+  for (var pi = 0; pi < pipeY.length; pi++) {
+    if (rnd() < 0.2) continue;
+    var segs = Math.max(6, Math.round(rad * 0.9));
+    for (var sgi = 0; sgi < segs; sgi++) {
+      var sa = (sgi / segs) * Math.PI * 2;
+      if (blocked(sa + 0.27, 0.3)) continue;
+      var PB = (pi === 0 || rnd() < 0.3) ? bPipeArcR : bPipeArc;
+      PB.add(R.cx, pipeY[pi], R.cz, rad - 0.5, rad - 0.5, rad - 0.5, HALF, sa, 0);
     }
   }
 
-  /* --- structural ribs across the ceiling --- */
-  var ribs = Math.max(2, Math.floor(R.d / 4.6));
-  for (var rb = 0; rb < ribs; rb++) {
-    var rz = R.cz - hd + (rb + 0.5) * (R.d / ribs);
-    bStrut.add(R.cx, WALL_H - 0.34, rz, R.w, 0.4, 0.42);
-    bStrut.add(R.cx - hw + 0.4, WALL_H - 1.5, rz, 0.4, 2.0, 0.42);
-    bStrut.add(R.cx + hw - 0.4, WALL_H - 1.5, rz, 0.4, 2.0, 0.42);
+  /* --- cable runs hugging the dome spring line --- */
+  var nCab = Math.max(8, Math.round(rad));
+  for (var cb = 0; cb < nCab; cb++) {
+    var ca = (cb / nCab) * Math.PI * 2 + 0.2;
+    if (blocked(ca, 0.12)) continue;
+    var chord = 2 * (rad - 0.55) * Math.sin(Math.PI / nCab);
+    for (var k = 0; k < 2; k++) {
+      bCable.add(R.cx + Math.sin(ca) * (rad - 0.55), WALL_H - 0.35 - k * 0.16, R.cz + Math.cos(ca) * (rad - 0.55),
+        0.05, chord, 0.05, HALF, ca + Math.PI / nCab, 0);
+    }
   }
 
-  /* --- ceiling light strips --- */
-  var lstrips = Math.max(2, Math.floor(R.d / 5.4));
-  for (var ls = 0; ls < lstrips; ls++) {
-    var lz = R.cz - hd + (ls + 0.5) * (R.d / lstrips);
-    var dead = rnd() < 0.22;
-    var B2 = dead ? new Batch(GEO.box, MAT.stripDead) : bStrip;
-    B2.add(R.cx, WALL_H - 0.62, lz, R.w * 0.44, 0.14, 0.42);
-    if (dead) B2.build(G);
+  /* --- radial deck plating: concentric rings plus spokes --- */
+  var bDeckRing = new Batch(GEO.ringRib, MAT.grate);
+  for (var dr = 1; dr <= 3; dr++) bDeckRing.add(R.cx, 0.05, R.cz, rad * dr / 3.4, rad * dr / 3.4, rad * dr / 3.4, HALF, 0, 0);
+  bDeckRing.build(G);
+  var spokes = 12;
+  for (var sp = 0; sp < spokes; sp++) {
+    var sa2 = (sp / spokes) * Math.PI * 2;
+    bGrate.add(R.cx + Math.sin(sa2) * rad * 0.5, 0.045, R.cz + Math.cos(sa2) * rad * 0.5,
+      0.16, 0.08, rad, 0, sa2, 0);
   }
 
-  /* --- floor grating strips --- */
-  var gs = Math.max(3, Math.floor(R.w / 2.2));
-  for (var gi = 0; gi < gs; gi++) {
-    var gx = R.cx - hw + (gi + 0.5) * (R.w / gs);
-    bGrate.add(gx, 0.035, R.cz, 0.24, 0.09, R.d * 0.9);
+  /* --- overhead light ring + spot strips --- */
+  var bDome = new Batch(GEO.ringRib, MAT.strip);
+  bDome.add(R.cx, WALL_H + DOME_H * 0.45, R.cz, rad * 0.42, rad * 0.42, rad * 0.42, HALF, 0, 0);
+  bDome.build(G);
+  var nStrip = 6;
+  for (var st = 0; st < nStrip; st++) {
+    var ta = (st / nStrip) * Math.PI * 2 + 0.3;
+    if (rnd() < 0.2) continue;
+    bStrip.add(R.cx + Math.sin(ta) * rad * 0.66, WALL_H - 0.25, R.cz + Math.cos(ta) * rad * 0.66,
+      0.3, 0.12, rad * 0.4, 0, ta, 0);
   }
-  bGrate.add(R.cx, 0.05, R.cz, R.w * 0.9, 0.06, 0.3);
 
-  /* --- consoles and control panels against walls --- */
+  /* --- hazard chevrons flanking each doorway --- */
+  for (var g = 0; g < gaps.length; g++) {
+    for (var hz = 0; hz < 8; hz++) {
+      var side = hz < 4 ? -1 : 1, kk = hz % 4;
+      var ha = gaps[g].a + side * (gaps[g].half + 0.055);
+      bHaz.add(R.cx + Math.sin(ha) * (rad - 0.3), 0.34 + kk * 0.52, R.cz + Math.cos(ha) * (rad - 0.3),
+        0.62, 0.32, 0.1, 0, ha, 0.5 * side);
+    }
+  }
+
+  /* --- consoles arranged tangentially around the perimeter --- */
   var nCons = 2 + Math.floor(rnd() * 3);
   for (var cn = 0; cn < nCons; cn++) {
-    var side2 = Math.floor(rnd() * 4);
-    var cx2, cz2, cry;
-    if (side2 === 0) { cx2 = R.cx + hw - 1.0; cz2 = R.cz + (rnd() - 0.5) * (R.d - 6); cry = -HALF; }
-    else if (side2 === 1) { cx2 = R.cx - hw + 1.0; cz2 = R.cz + (rnd() - 0.5) * (R.d - 6); cry = HALF; }
-    else if (side2 === 2) { cz2 = R.cz + hd - 1.0; cx2 = R.cx + (rnd() - 0.5) * (R.w - 6); cry = Math.PI; }
-    else { cz2 = R.cz - hd + 1.0; cx2 = R.cx + (rnd() - 0.5) * (R.w - 6); cry = 0; }
-    buildConsole(G, cx2, cz2, cry, rnd, btn);
+    var caa = rnd() * Math.PI * 2;
+    if (blocked(caa, 0.35)) continue;
+    var cr = rad - 1.5;
+    buildConsole(G, R.cx + Math.sin(caa) * cr, R.cz + Math.cos(caa) * cr, caa + Math.PI, rnd, btn);
   }
 
-  /* --- freestanding props --- */
+  /* --- central spine column in bigger rooms: very shippy, good sightline breaker --- */
+  if (rad > 8.6 && R.role !== 'REACTOR' && R.nodes.length === 0) {
+    var col = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.45, WALL_H, 12), MAT.hull);
+    col.position.set(R.cx, WALL_H / 2, R.cz); G.add(col);
+    for (var cr2 = 0; cr2 < 3; cr2++) {
+      var bnd = new THREE.Mesh(new THREE.TorusGeometry(1.32, 0.11, 6, 16), MAT.bolt);
+      bnd.position.set(R.cx, 1.2 + cr2 * 2.4, R.cz); bnd.rotation.x = Math.PI / 2; G.add(bnd);
+    }
+    addBox(R.cx - 1.4, R.cx + 1.4, R.cz - 1.4, R.cz + 1.4, WALL_H);
+  }
+
   addProps(G, R, sec, rnd, bBolt);
 
-  bPanel.build(G); bPanelAlt.build(G); bPipe.build(G); bPipeR.build(G); bPipeC.build(G);
-  bElbow.build(G); bCable.build(G); bBolt.build(G); bStrut.build(G);
-  bGrate.build(G); bHaz.build(G); bStrip.build(G);
+  bRib.build(G); bPanel.build(G); bPanelAlt.build(G); bPipeArc.build(G); bPipeArcR.build(G);
+  bBolt.build(G); bGrate.build(G); bHaz.build(G); bStrip.build(G); bCable.build(G);
   for (var bi = 0; bi < btn.length; bi++) btn[bi].build(G);
 }
 
@@ -1195,10 +1240,11 @@ function buildConsole(G, x, z, ry, rnd, btn) {
 }
 
 function addProps(G, R, sec, rnd, bBolt) {
-  var n = 3 + Math.floor(rnd() * 4), hw = R.w / 2 - 3, hd = R.d / 2 - 3;
+  var n = 3 + Math.floor(rnd() * 4);
   for (var i = 0; i < n; i++) {
-    var x = R.cx + (rnd() - 0.5) * hw * 2, z = R.cz + (rnd() - 0.5) * hd * 2;
-    if (Math.abs(x - R.cx) < 3.6 && Math.abs(z - R.cz) < 3.6) continue;
+    var ps = polarIn(R, rnd, 0.74);
+    var x = ps.x, z = ps.z;
+    if (ps.rad < 3.8) continue;
     var g = new THREE.Group(), w, dp, h;
     if (sec.props === 'crates') {
       w = 1.5 + rnd() * 0.9; dp = w; h = 1.2 + rnd() * 1.1;
@@ -1242,21 +1288,27 @@ function addProps(G, R, sec, rnd, bBolt) {
       var vw = new THREE.Mesh(new THREE.TorusGeometry(0.32, 0.07, 5, 10), MAT.pipeRust);
       vw.position.set(0, h * 0.7, dp / 2 + 0.06); g.add(vw);
     }
-    g.position.set(x, 0, z); G.add(g);
-    addBox(x - w / 2, x + w / 2, z - dp / 2, z + dp / 2, h);
+    g.position.set(x, 0, z);
+    g.rotation.y = Math.atan2(x - R.cx, z - R.cz);
+    G.add(g);
+    var span = Math.max(w, dp) / 2;
+    addBox(x - span, x + span, z - span, z + span, h);
   }
 }
 
 function buildVents(G, R, rnd) {
   R.vpos = [];
-  var hw = R.w / 2, hd = R.d / 2;
+  var gaps = roomGaps(R);
   for (var v = 0; v < R.vents.length; v++) {
-    var side = Math.floor(rnd() * 4), t = (rnd() - 0.5) * 0.62;
-    var vx = R.cx, vz = R.cz, ry = 0;
-    if (side === 0) { vx = R.cx + hw - 1.9; vz = R.cz + t * R.d; ry = -Math.PI / 2; }
-    else if (side === 1) { vx = R.cx - hw + 1.9; vz = R.cz + t * R.d; ry = Math.PI / 2; }
-    else if (side === 2) { vz = R.cz + hd - 1.9; vx = R.cx + t * R.w; ry = Math.PI; }
-    else { vz = R.cz - hd + 1.9; vx = R.cx + t * R.w; ry = 0; }
+    var a = rnd() * Math.PI * 2, guard = 0;
+    while (guard++ < 40) {
+      var clash = false;
+      for (var q = 0; q < gaps.length; q++) if (Math.abs(angDiff(a, gaps[q].a)) < gaps[q].half + 0.28) clash = true;
+      if (!clash) break;
+      a = rnd() * Math.PI * 2;
+    }
+    var vr = R.rad - 1.6;
+    var vx = R.cx + Math.sin(a) * vr, vz = R.cz + Math.cos(a) * vr;
     R.vpos.push({ x: vx, z: vz });
     var g = new THREE.Group();
     var frame = new THREE.Mesh(new THREE.BoxGeometry(2.4, 2.4, 0.22), MAT.hullDark);
@@ -1267,90 +1319,122 @@ function buildVents(G, R, rnd) {
     }
     var glow = new THREE.Mesh(new THREE.BoxGeometry(2.0, 2.0, 0.04), basic(0x2a0c08));
     glow.position.set(0, 1.5, 0.02); g.add(glow);
-    g.position.set(vx, 0, vz); g.rotation.y = ry; G.add(g);
+    var hood = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.3, 0.6), MAT.strut);
+    hood.position.set(0, 2.85, 0.2); g.add(hood);
+    g.position.set(vx, 0, vz); g.rotation.y = a + Math.PI; G.add(g);
   }
 }
 
 function buildCorridor(G, A, B, sec, rnd) {
-  var d = dirOf(A, B);
-  var bStrut = new Batch(GEO.box, MAT.strut);
+  var d = dirOf(A, B), HALF = Math.PI / 2;
+  var horiz = d.x !== 0;
+  var lo, hi, cross;
+  if (horiz) {
+    var x0 = A.cx + d.x * (A.rad - 0.8), x1 = B.cx - d.x * (B.rad - 0.8);
+    lo = Math.min(x0, x1); hi = Math.max(x0, x1); cross = A.cz;
+  } else {
+    var z0 = A.cz + d.z * (A.rad - 0.8), z1 = B.cz - d.z * (B.rad - 0.8);
+    lo = Math.min(z0, z1); hi = Math.max(z0, z1); cross = A.cx;
+  }
+  var len = hi - lo;
+  if (len < 0.4) return;
+  var mid = (lo + hi) / 2;
+
+  /* pressure hull tube, viewed from inside */
+  var tubeMat = new THREE.MeshToonMaterial({
+    color: 0x2e3945, gradientMap: gradMap, emissive: 0x0b1119,
+    emissiveIntensity: 0.6, side: THREE.BackSide
+  });
+  var tube = new THREE.Mesh(GEO.tube, tubeMat);
+  tube.scale.set(TUBE_R, len, TUBE_R);
+  if (horiz) { tube.rotation.z = HALF; tube.position.set(mid, TUBE_Y, cross); }
+  else { tube.rotation.x = HALF; tube.position.set(cross, TUBE_Y, mid); }
+  G.add(tube);
+
+  /* flat walkway deck slung inside the tube */
+  var deck = horiz
+    ? new THREE.Mesh(new THREE.BoxGeometry(len, 0.4, DOOR_W), MAT.floor)
+    : new THREE.Mesh(new THREE.BoxGeometry(DOOR_W, 0.4, len), MAT.floor);
+  deck.position.set(horiz ? mid : cross, -0.2, horiz ? cross : mid); G.add(deck);
+
+  /* collision: the walkway chord, extended into both rooms to seal the junction */
+  var bRib = new Batch(GEO.tubeRib, MAT.strut);
   var bPipe = new Batch(GEO.pipe, MAT.pipe);
+  var bPipeR = new Batch(GEO.pipe, MAT.pipeRust);
   var bCable = new Batch(GEO.pipeThin, MAT.cable);
   var bStrip = new Batch(GEO.box, MAT.strip);
-  var bPanel = new Batch(GEO.panel, MAT.panelAlt);
-  var HALF = Math.PI / 2;
+  var bGrate = new Batch(GEO.box, MAT.grate);
+  var bBolt = new Batch(GEO.bolt, MAT.bolt);
 
-  var lo, hi, len, horiz = d.x !== 0;
-  if (horiz) {
-    var x0 = A.cx + d.x * A.w / 2, x1 = B.cx - d.x * B.w / 2;
-    lo = Math.min(x0, x1); hi = Math.max(x0, x1);
-  } else {
-    var z0 = A.cz + d.z * A.d / 2, z1 = B.cz - d.z * B.d / 2;
-    lo = Math.min(z0, z1); hi = Math.max(z0, z1);
-  }
-  len = hi - lo;
-  if (len < 0.2) return;
-  var mid = (lo + hi) / 2;
-  var cross = horiz ? A.cz : A.cx;
-
-  /* floor + ceiling */
-  if (horiz) {
-    var f = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, DOOR_W), MAT.floor);
-    f.position.set(mid, -0.25, cross); G.add(f);
-    var c = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, DOOR_W + 1), MAT.ceil);
-    c.position.set(mid, WALL_H + 0.25, cross); G.add(c);
-  } else {
-    var f2 = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W, 0.5, len), MAT.floor);
-    f2.position.set(cross, -0.25, mid); G.add(f2);
-    var c2 = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W + 1, 0.5, len), MAT.ceil);
-    c2.position.set(cross, WALL_H + 0.25, mid); G.add(c2);
-  }
-
-  /* side walls + dressing */
   [-1, 1].forEach(function (sgn) {
-    var off = sgn * (DOOR_W / 2 + WALL_T / 2), inn = -sgn;
     if (horiz) {
-      var wz = cross + off;
-      var m = new THREE.Mesh(new THREE.BoxGeometry(len, WALL_H, WALL_T), MAT.hull);
-      m.position.set(mid, WALL_H / 2, wz); G.add(m);
-      addBox(lo, hi, wz - WALL_T / 2, wz + WALL_T / 2);
-      bPipe.add(mid, 5.4, wz + inn * 0.6, 0.16, len - 0.4, 0.16, 0, 0, HALF);
-      bPipe.add(mid, 1.3, wz + inn * 0.55, 0.12, len - 0.4, 0.12, 0, 0, HALF);
-      var np = Math.max(1, Math.floor(len / 2.6));
-      for (var p = 0; p < np; p++) bPanel.add(lo + (p + 0.5) * (len / np), 3.1, wz + inn * 0.14, (len / np) * 0.7, 2.1, 0.2);
-      for (var cb = 0; cb < np; cb++) bCable.add(lo + (cb + 0.5) * (len / np), 6.5, wz + inn * 0.5, 0.05, len / np * 0.92, 0.05, 0, 0, HALF);
+      var wz = cross + sgn * (DOOR_W / 2 + WALL_T / 2);
+      addBox(lo - 1.6, hi + 1.6, wz - WALL_T / 2, wz + WALL_T / 2, WALL_H);
+      /* kick rail where the deck meets the curve */
+      var rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.55, 0.3), MAT.strut);
+      rail.position.set(mid, 0.28, wz - sgn * 0.2); G.add(rail);
     } else {
-      var wx = cross + off;
-      var m2 = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, len), MAT.hull);
-      m2.position.set(wx, WALL_H / 2, mid); G.add(m2);
-      addBox(wx - WALL_T / 2, wx + WALL_T / 2, lo, hi);
-      bPipe.add(wx + inn * 0.6, 5.4, mid, 0.16, len - 0.4, 0.16, HALF, 0, 0);
-      bPipe.add(wx + inn * 0.55, 1.3, mid, 0.12, len - 0.4, 0.12, HALF, 0, 0);
-      var np2 = Math.max(1, Math.floor(len / 2.6));
-      for (var p2 = 0; p2 < np2; p2++) bPanel.add(wx + inn * 0.14, 3.1, lo + (p2 + 0.5) * (len / np2), 0.2, 2.1, (len / np2) * 0.7);
-      for (var cb2 = 0; cb2 < np2; cb2++) bCable.add(wx + inn * 0.5, 6.5, lo + (cb2 + 0.5) * (len / np2), 0.05, len / np2 * 0.92, 0.05, HALF, 0, 0);
+      var wx = cross + sgn * (DOOR_W / 2 + WALL_T / 2);
+      addBox(wx - WALL_T / 2, wx + WALL_T / 2, lo - 1.6, hi + 1.6, WALL_H);
+      var rail2 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.55, len), MAT.strut);
+      rail2.position.set(wx - sgn * 0.2, 0.28, mid); G.add(rail2);
     }
   });
 
-  /* ribs + light strips down the run */
-  var nRib = Math.max(1, Math.floor(len / 3.2));
-  for (var rb = 0; rb < nRib; rb++) {
-    var t = lo + (rb + 0.5) * (len / nRib);
-    if (horiz) {
-      bStrut.add(t, WALL_H - 0.36, cross, 0.4, 0.42, DOOR_W);
-      bStrut.add(t, WALL_H / 2, cross - DOOR_W / 2 + 0.25, 0.4, WALL_H, 0.42);
-      bStrut.add(t, WALL_H / 2, cross + DOOR_W / 2 - 0.25, 0.4, WALL_H, 0.42);
-      if (rb % 2 === 0) bStrip.add(t, WALL_H - 0.64, cross, 0.34, 0.12, DOOR_W * 0.5);
-    } else {
-      bStrut.add(cross, WALL_H - 0.36, t, DOOR_W, 0.42, 0.4);
-      bStrut.add(cross - DOOR_W / 2 + 0.25, WALL_H / 2, t, 0.42, WALL_H, 0.4);
-      bStrut.add(cross + DOOR_W / 2 - 0.25, WALL_H / 2, t, 0.42, WALL_H, 0.4);
-      if (rb % 2 === 0) bStrip.add(cross, WALL_H - 0.64, t, DOOR_W * 0.5, 0.12, 0.34);
-    }
+  /* rib rings down the tube */
+  var nRib = Math.max(2, Math.round(len / 2.6));
+  for (var i = 0; i <= nRib; i++) {
+    var t = lo + (i / nRib) * len;
+    if (horiz) bRib.add(t, TUBE_Y, cross, TUBE_R - 0.08, TUBE_R - 0.08, TUBE_R - 0.08, 0, HALF, 0);
+    else bRib.add(cross, TUBE_Y, t, TUBE_R - 0.08, TUBE_R - 0.08, TUBE_R - 0.08, 0, 0, 0);
   }
 
-  bStrut.build(G); bPipe.build(G); bCable.build(G); bStrip.build(G); bPanel.build(G);
-  lightAnchors.push({ x: horiz ? mid : cross, y: WALL_H - 1.0, z: horiz ? cross : mid, color: 0x8fa8bd, base: 0.6 });
+  /* conduit runs at fixed clock positions around the tube */
+  var clocks = [0.55, 1.15, Math.PI - 1.15, Math.PI - 0.55, Math.PI + 0.8, -0.8];
+  for (var c = 0; c < clocks.length; c++) {
+    var ang = clocks[c], rr = 0.1 + (c % 3) * 0.05;
+    var ox = Math.sin(ang) * (TUBE_R - 0.36), oy = TUBE_Y + Math.cos(ang) * (TUBE_R - 0.36);
+    if (oy < 0.7) continue;
+    var PB = (c % 3 === 1) ? bPipeR : bPipe;
+    if (horiz) PB.add(mid, oy, cross + ox, rr, len, rr, 0, 0, HALF);
+    else PB.add(cross + ox, oy, mid, rr, len, rr, HALF, 0, 0);
+  }
+
+  /* cable bundle along the crown */
+  for (var cb = 0; cb < 3; cb++) {
+    var off = (cb - 1) * 0.17;
+    if (horiz) bCable.add(mid, TUBE_Y + TUBE_R - 0.3, cross + off, 0.05, len, 0.05, 0, 0, HALF);
+    else bCable.add(cross + off, TUBE_Y + TUBE_R - 0.3, mid, 0.05, len, 0.05, HALF, 0, 0);
+  }
+
+  /* light rings + deck grating */
+  for (var ls = 0; ls < nRib; ls++) {
+    var lt = lo + (ls + 0.5) * (len / nRib);
+    if (ls % 2) continue;
+    if (horiz) {
+      bStrip.add(lt, TUBE_Y + TUBE_R - 0.55, cross, 0.3, 0.12, 1.5);
+      bStrip.add(lt, 0.24, cross - DOOR_W / 2 + 0.35, 0.28, 0.1, 0.5);
+      bStrip.add(lt, 0.24, cross + DOOR_W / 2 - 0.35, 0.28, 0.1, 0.5);
+    } else {
+      bStrip.add(cross, TUBE_Y + TUBE_R - 0.55, lt, 1.5, 0.12, 0.3);
+      bStrip.add(cross - DOOR_W / 2 + 0.35, 0.24, lt, 0.5, 0.1, 0.28);
+      bStrip.add(cross + DOOR_W / 2 - 0.35, 0.24, lt, 0.5, 0.1, 0.28);
+    }
+  }
+  var nG = Math.max(2, Math.round(len / 1.5));
+  for (var gi = 0; gi < nG; gi++) {
+    var gt = lo + (gi + 0.5) * (len / nG);
+    if (horiz) bGrate.add(gt, 0.03, cross, 0.2, 0.07, DOOR_W - 0.7);
+    else bGrate.add(cross, 0.03, gt, DOOR_W - 0.7, 0.07, 0.2);
+  }
+
+  /* crown slab: without it an angled shot climbs over the tube walls and out into space */
+  if (horiz) addBox(lo - 1.6, hi + 1.6, cross - TUBE_R, cross + TUBE_R, 60, null, TUBE_Y + TUBE_R - 0.3);
+  else addBox(cross - TUBE_R, cross + TUBE_R, lo - 1.6, hi + 1.6, 60, null, TUBE_Y + TUBE_R - 0.3);
+
+  bRib.build(G); bPipe.build(G); bPipeR.build(G); bCable.build(G);
+  bStrip.build(G); bGrate.build(G); bBolt.build(G);
+  lightAnchors.push({ x: horiz ? mid : cross, y: TUBE_Y + 1.6, z: horiz ? cross : mid, color: 0x8fa8bd, base: 0.6 });
 }
 
 function buildDoors() {
@@ -1361,11 +1445,11 @@ function buildDoors() {
       var rev = null;
       for (var k = 0; k < N.links.length; k++) if (N.links[k].to === R.id) rev = N.links[k];
       if (!rev || !rev.lock) continue;
-      var d = dirOf(R, N), hw = R.w / 2, hd = R.d / 2;
+      var d = dirOf(R, N);
       var g = new THREE.Group();
       var px, pz, ry;
-      if (d.x !== 0) { px = R.cx + d.x * (hw + 0.3); pz = R.cz; ry = Math.PI / 2; }
-      else { px = R.cx; pz = R.cz + d.z * (hd + 0.3); ry = 0; }
+      if (d.x !== 0) { px = R.cx + d.x * (R.rad - 0.4); pz = R.cz; ry = Math.PI / 2; }
+      else { px = R.cx; pz = R.cz + d.z * (R.rad - 0.4); ry = 0; }
 
       /* two-leaf blast door with frame and warning light */
       [-1, 1].forEach(function (sgn) {
@@ -1392,8 +1476,7 @@ function buildDoors() {
 }
 
 function buildBench(G, R) {
-  var hd = R.d / 2;
-  var bx = R.cx, bz = R.cz - hd + 3.4;
+  var bx = R.cx, bz = R.cz - R.rad * 0.58;
   var g = new THREE.Group();
   var top = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.3, 2.2), MAT.console);
   top.position.y = 1.5; g.add(top);
@@ -1411,7 +1494,7 @@ function buildBench(G, R) {
   lightAnchors.push({ x: bx, y: 3.0, z: bz, color: 0x7a5cff, base: 1.2 });
 
   /* practice canister: gives the tutorial's fire step something to hit */
-  var tx = R.cx + R.w / 2 - 4.2, tz = R.cz;
+  var tx = R.cx + R.rad * 0.6, tz = R.cz + R.rad * 0.25;
   var tg = new THREE.Group();
   var can = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 1.9, 10), toon(0xb8912f, 0xffd08a, 0.35));
   can.position.y = 1.5; tg.add(can);
@@ -1441,11 +1524,12 @@ function buildNode(G, R, node, sec) {
   core.position.y = 3.8; g.add(core);
   var conduit = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.2, 6), MAT.pipeRust);
   conduit.position.set(1.1, 2.6, 0); conduit.rotation.z = 0.3; g.add(conduit);
-  var pz = R.cz + (R.role === 'REACTOR' || R.role === 'CRYOBAY' ? R.d / 2 - 3.6 : 0);
-  g.position.set(R.cx, 0, pz); G.add(g);
-  addBox(R.cx - 1.6, R.cx + 1.6, pz - 1.6, pz + 1.6, 4.2);
-  nodeObjs.push({ node: node, room: R.id, x: R.cx, z: pz, g: g, core: core, col: col, r: 3.8 });
-  lightAnchors.push({ x: R.cx, y: 3.8, z: pz, color: 0xff5a3c, base: 1.3, node: nodeObjs[nodeObjs.length - 1] });
+  var off = (R.role === 'REACTOR' || R.role === 'CRYOBAY') ? R.rad * 0.6 : 0;
+  var px = R.cx, pz = R.cz + off;
+  g.position.set(px, 0, pz); G.add(g);
+  addBox(px - 1.6, px + 1.6, pz - 1.6, pz + 1.6, 4.2);
+  nodeObjs.push({ node: node, room: R.id, x: px, z: pz, g: g, core: core, col: col, r: 3.8 });
+  lightAnchors.push({ x: px, y: 3.8, z: pz, color: 0xff5a3c, base: 1.3, node: nodeObjs[nodeObjs.length - 1] });
 }
 
 function buildPickup(G, type, x, z) {
@@ -1767,7 +1851,7 @@ function showDamageDir(rel) {
 function roomAt(x, z) {
   for (var i = 0; i < ship.rooms.length; i++) {
     var R = ship.rooms[i];
-    if (Math.abs(x - R.cx) <= R.w / 2 + 0.5 && Math.abs(z - R.cz) <= R.d / 2 + 0.5) return i;
+    if (Math.hypot(x - R.cx, z - R.cz) <= R.rad + 0.6) return i;
   }
   return -1;
 }
@@ -2263,7 +2347,7 @@ function updateBoss(dt) {
   if (boss.state === 'FLED' && was !== 'FLED') {
     toast('ARENA ATMOSPHERE GONE — FALL BACK'); hurtPlayer(24);
     var R = ship.rooms[ship.reactorRoom];
-    player.pos.x = R.cx; player.pos.z = R.cz + R.d / 2 + 5;
+    player.pos.x = R.cx; player.pos.z = R.cz + R.rad * 0.75;
     resolve(player.pos, PLR_R);
     boss.state = 'DORMANT'; boss.arena = CFG.ARENA_TIMER; boss.t = 0;
   }
