@@ -1,0 +1,1737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<title>COLDWAKE — Vertical Slice</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box;-webkit-tap-highlight-color:transparent;user-select:none}
+html,body{width:100%;height:100%;overflow:hidden;background:#05080c;font-family:ui-monospace,'SF Mono',Menlo,Consolas,monospace;color:#cfe3f2}
+canvas{display:block;position:fixed;inset:0}
+#hud{position:fixed;inset:0;pointer-events:none;z-index:10}
+.pad{position:absolute;padding:env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left)}
+
+/* top-left vitals */
+#vitals{position:absolute;top:calc(10px + env(safe-area-inset-top));left:calc(10px + env(safe-area-inset-left));width:190px}
+.bar{height:9px;background:#0d1620;border:1px solid #223140;margin-bottom:5px;position:relative;overflow:hidden}
+.bar>i{display:block;height:100%;width:100%;transition:width .12s linear}
+.bar>span{position:absolute;left:5px;top:-1px;font-size:8px;letter-spacing:.14em;color:#8fb0c8;line-height:9px;text-shadow:0 0 3px #000}
+#hpF{background:linear-gradient(90deg,#ff5a4a,#ff9d6b)}
+#o2F{background:linear-gradient(90deg,#4ad4ff,#9ff0ff)}
+
+/* top-right inventory */
+#inv{position:absolute;top:calc(10px + env(safe-area-inset-top));right:calc(10px + env(safe-area-inset-right));text-align:right;font-size:11px;line-height:1.55;letter-spacing:.05em}
+#inv b{color:#ffd08a;font-weight:600}
+.cry{color:#b6ff9e}
+.hot{color:#ffb84a}
+
+/* alert */
+#alert{position:absolute;top:calc(10px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);text-align:center;font-size:10px;letter-spacing:.24em;color:#5f7f96;transition:color .25s}
+#alertBars{display:flex;gap:3px;justify-content:center;margin-top:4px}
+#alertBars i{width:22px;height:3px;background:#1b2836;display:block}
+#alertBars i.on{background:#ff7a3d;box-shadow:0 0 7px #ff7a3d}
+
+/* objective */
+#obj{position:absolute;left:50%;transform:translateX(-50%);top:calc(46px + env(safe-area-inset-top));font-size:11px;letter-spacing:.08em;color:#9fc4dc;text-align:center;text-shadow:0 0 6px #000;max-width:78vw}
+#sector{position:absolute;left:50%;transform:translateX(-50%);top:calc(64px + env(safe-area-inset-top));font-size:9px;letter-spacing:.3em;color:#4f6c82}
+
+/* weapons */
+#weps{position:absolute;bottom:calc(14px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;gap:7px}
+.wep{pointer-events:auto;min-width:60px;padding:7px 9px;background:rgba(10,18,26,.82);border:1px solid #22323f;font-size:9px;letter-spacing:.1em;text-align:center;color:#7f9db4;border-radius:3px}
+.wep.sel{border-color:#6fd7ff;color:#cfeeff;box-shadow:0 0 12px rgba(80,190,255,.28)}
+.wep small{display:block;font-size:8px;color:#5b7a92}
+.wep .amt{display:block;font-size:8px;color:#ffd08a;margin-top:2px}
+
+/* charge meter */
+#chg{position:absolute;bottom:calc(70px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:150px;height:5px;background:#0d1620;border:1px solid #223140;display:none}
+#chgF{height:100%;width:0;background:linear-gradient(90deg,#7a5cff,#c9a7ff);box-shadow:0 0 10px #9b7cff}
+
+/* touch sticks */
+.stick{position:absolute;bottom:calc(24px + env(safe-area-inset-bottom));width:118px;height:118px;border-radius:50%;border:1px solid rgba(90,140,175,.2);background:rgba(10,20,28,.28);pointer-events:auto;display:none}
+#stickL{left:calc(18px + env(safe-area-inset-left))}
+#stickR{right:calc(18px + env(safe-area-inset-right))}
+.stick>i{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:rgba(120,190,230,.24);border:1px solid rgba(150,215,255,.45)}
+body.touch .stick{display:block}
+
+/* interact */
+#act{position:absolute;bottom:calc(150px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);padding:9px 16px;background:rgba(14,30,42,.9);border:1px solid #4f9fc4;border-radius:3px;font-size:11px;letter-spacing:.1em;color:#bfe6ff;display:none;pointer-events:auto;text-align:center}
+#act small{display:block;font-size:8px;color:#6f95ac;letter-spacing:.14em;margin-top:3px}
+
+/* boss */
+#boss{position:absolute;top:calc(92px + env(safe-area-inset-top));left:50%;transform:translateX(-50%);width:min(400px,82vw);display:none;text-align:center}
+#bossName{font-size:11px;letter-spacing:.34em;color:#ffb37a;margin-bottom:5px}
+#bossBar{height:7px;background:#160c08;border:1px solid #4a2a1c;position:relative}
+#bossF{height:100%;background:linear-gradient(90deg,#ff6a3d,#ffb347);width:100%}
+#armor{display:flex;gap:5px;justify-content:center;margin-top:5px}
+#armor i{width:34px;height:4px;background:#3a2418;display:block}
+#armor i.on{background:#ffa04a;box-shadow:0 0 7px #ff8c3a}
+#bossState{font-size:9px;letter-spacing:.22em;margin-top:6px;color:#c88b5f;height:11px}
+#bossState.vent{color:#9dff7a;text-shadow:0 0 9px #6bff4a}
+#arenaT{font-size:9px;letter-spacing:.2em;color:#7f96a8;margin-top:3px}
+
+/* damage flash */
+#flash{position:fixed;inset:0;background:radial-gradient(ellipse at center,transparent 42%,rgba(255,40,30,.5) 100%);opacity:0;pointer-events:none;z-index:11;transition:opacity .22s}
+
+/* toast */
+#toast{position:absolute;left:50%;transform:translateX(-50%);bottom:calc(200px + env(safe-area-inset-bottom));font-size:11px;letter-spacing:.09em;color:#dff0ff;background:rgba(8,16,24,.86);border-left:2px solid #6fd7ff;padding:7px 13px;opacity:0;transition:opacity .3s;max-width:80vw;text-align:center}
+
+/* screens */
+.screen{position:fixed;inset:0;background:#05080c;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:26px;text-align:center}
+.screen h1{font-size:clamp(30px,9vw,58px);letter-spacing:.24em;font-weight:400;color:#dff0ff;text-shadow:0 0 26px rgba(90,190,255,.4);margin-bottom:6px}
+.screen .sub{font-size:10px;letter-spacing:.34em;color:#4f7690;margin-bottom:30px}
+.screen p{font-size:12px;line-height:1.75;color:#8fb0c8;max-width:430px;margin-bottom:20px}
+.btn{pointer-events:auto;padding:12px 26px;background:#0c1a26;border:1px solid #3c7ea0;color:#bfe6ff;font-family:inherit;font-size:11px;letter-spacing:.18em;cursor:pointer;margin:5px;border-radius:3px}
+.btn:active{background:#153044}
+.btn.ghost{border-color:#26394a;color:#6f93ab}
+#codeIn{background:#080f16;border:1px solid #2b4356;color:#9fe8ff;font-family:inherit;font-size:17px;letter-spacing:.32em;padding:11px 14px;text-align:center;width:210px;text-transform:uppercase;border-radius:3px}
+#shipCode{font-size:13px;letter-spacing:.3em;color:#9fe8ff;margin-bottom:22px}
+.hint{font-size:9px;letter-spacing:.13em;color:#3f5f75;margin-top:22px;line-height:1.9}
+#loading{position:fixed;inset:0;background:#05080c;z-index:40;display:flex;align-items:center;justify-content:center;font-size:10px;letter-spacing:.3em;color:#4f7690}
+</style>
+</head>
+<body>
+<canvas id="cv"></canvas>
+
+<div id="hud">
+  <div id="vitals">
+    <div class="bar"><i id="hpF"></i><span>INTEGRITY</span></div>
+    <div class="bar"><i id="o2F"></i><span>O2</span></div>
+  </div>
+  <div id="inv"></div>
+  <div id="alert">HIVE ALERT<div id="alertBars"><i></i><i></i><i></i></div></div>
+  <div id="obj"></div>
+  <div id="sector"></div>
+  <div id="boss">
+    <div id="bossName">BROODMOTHER</div>
+    <div id="bossBar"><i id="bossF"></i></div>
+    <div id="armor"><i></i><i></i><i></i></div>
+    <div id="bossState"></div>
+    <div id="arenaT"></div>
+  </div>
+  <div id="chg"><div id="chgF"></div></div>
+  <div id="weps">
+    <div class="wep sel" data-w="0">SIDEARM<span class="amt">∞</span></div>
+    <div class="wep" data-w="1">TORCH<span class="amt">melee</span></div>
+    <div class="wep" data-w="2">RIFLE<span class="amt" id="rifleAmt">0</span></div>
+  </div>
+  <div id="act"></div>
+  <div class="stick" id="stickL"><i></i></div>
+  <div class="stick" id="stickR"><i></i></div>
+  <div id="toast"></div>
+</div>
+<div id="flash"></div>
+
+<div class="screen" id="title">
+  <h1>COLDWAKE</h1>
+  <div class="sub">VERTICAL SLICE · BUILD 01</div>
+  <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
+  <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
+  <div>
+    <button class="btn" id="btnStart">BOARD SHIP</button>
+    <button class="btn ghost" id="btnRand">RANDOM SHIP</button>
+  </div>
+  <div class="hint">
+    EVERY SHIP CODE GENERATES A DIFFERENT VESSEL<br>
+    DESKTOP — WASD MOVE · MOUSE AIM · CLICK FIRE · HOLD RIGHT-CLICK CHARGE · E INTERACT · 1/2/3 WEAPONS<br>
+    MOBILE — LEFT STICK MOVE · RIGHT STICK AIM & FIRE · TAP WEAPON TO SWITCH
+  </div>
+</div>
+
+<div class="screen" id="endScreen" style="display:none">
+  <h1 id="endTitle">REACTOR ONLINE</h1>
+  <div class="sub" id="endSub"></div>
+  <p id="endBody"></p>
+  <div><button class="btn" id="btnAgain">NEW SHIP</button><button class="btn ghost" id="btnSame">SAME SHIP</button></div>
+</div>
+
+<div id="loading">INITIALISING</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script id="cw-core">
+/* COLDWAKE CORE — pure logic, no rendering deps. Testable in Node. */
+(function (root) {
+'use strict';
+var CW = {};
+
+/* ---------- CONFIG ---------- */
+CW.CFG = {
+  CELL: 26,               // world units per grid cell
+  GRID: 7,
+  ROOMS_MIN: 9, ROOMS_MAX: 12,
+  CRYSTAL_DECAY: 240,     // s, raw voidglass
+  ARENA_TIMER: 240,       // s, boss arena atmosphere
+  VENT_TIME: 6,
+  STAGGER_TIME: 4,
+  ARMOR_TIERS: 3,
+  RIFLE_CAP: 3,
+  CONVERT_TIME: 8,
+  ALERT_SHED: 20,         // s to shed one alert step with 0 hot
+  O2_MAX: 100,
+  O2_DRAIN_PRE_N1: 0.55,  // per second, global before scrubber
+  PLAYER_HP: 100,
+  CELL_CAP: 2,            // containment cell capacity
+  N0_SCRAP: 4,
+  N1_SCRAP: 8, N1_MESH: 2,
+  SCRAP_SLACK: 1.7        // place this multiple of required scrap
+};
+
+/* ---------- RNG ---------- */
+CW.hash = function (str) {
+  var h = 2166136261 >>> 0;
+  for (var i = 0; i < str.length; i++) {
+    h ^= str.charCodeAt(i);
+    h = Math.imul(h, 16777619) >>> 0;
+  }
+  return h >>> 0;
+};
+CW.rng = function (seed) {
+  var a = seed >>> 0;
+  return function () {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    var t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+};
+CW.CODE_CHARS = 'ACDEFGHJKLMNPQRTUVWXY3479';
+CW.makeCode = function (rnd) {
+  var s = '';
+  for (var i = 0; i < 6; i++) s += CW.CODE_CHARS[Math.floor(rnd() * CW.CODE_CHARS.length)];
+  return s.slice(0, 3) + '-' + s.slice(3);
+};
+CW.normCode = function (c) {
+  return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+};
+
+/* ---------- SECTOR IDENTITY (authored skin over procedural layout) ---------- */
+CW.SECTORS = {
+  CRYOBAY:  { name: 'Cryobay',        light: 0x6fb7d8, fog: 0x0a1520, accent: 0x9fe8ff, props: 'pods'   },
+  SPINE:    { name: 'Spinal Corridor',light: 0x8899aa, fog: 0x0b1118, accent: 0xc9d6e2, props: 'pipes'  },
+  HYDRO:    { name: 'Hydroponics',    light: 0x7fd98a, fog: 0x08170e, accent: 0xb6ff9e, props: 'planters'},
+  MEDBAY:   { name: 'Medbay',         light: 0x74e0d6, fog: 0x081716, accent: 0xa9fff2, props: 'beds'   },
+  HOLD:     { name: 'Cargo Hold',     light: 0xd9a557, fog: 0x181209, accent: 0xffd08a, props: 'crates' },
+  REACTOR:  { name: 'Reactor Core',   light: 0xff9340, fog: 0x1a0c05, accent: 0xffc46b, props: 'coolant'}
+};
+
+/* ---------- SHIP GENERATION ----------
+   Graph first, geometry second. Roles and locks are assigned on the abstract
+   graph and verified solvable BEFORE any room boxes exist. */
+
+CW.generateShip = function (code) {
+  var norm = CW.normCode(code);
+  var rnd = CW.rng(CW.hash(norm || 'DEFAULT'));
+  var G = CW.CFG.GRID;
+  var target = CW.CFG.ROOMS_MIN + Math.floor(rnd() * (CW.CFG.ROOMS_MAX - CW.CFG.ROOMS_MIN + 1));
+
+  /* --- 1. topology: growth walk on a grid --- */
+  var occupied = {};
+  var rooms = [];
+  function key(x, y) { return x + ',' + y; }
+  function addRoom(x, y) {
+    var r = {
+      id: rooms.length, gx: x, gy: y,
+      w: 14 + Math.floor(rnd() * 8),   // 14..21
+      d: 14 + Math.floor(rnd() * 8),
+      links: [], role: 'SPINE', nodes: [], crystals: [], scrap: [], vents: []
+    };
+    occupied[key(x, y)] = r.id;
+    rooms.push(r);
+    return r;
+  }
+  var sx = 2 + Math.floor(rnd() * (G - 4)), sy = 2 + Math.floor(rnd() * (G - 4));
+  addRoom(sx, sy);
+  var guard = 0;
+  while (rooms.length < target && guard++ < 4000) {
+    var from = rooms[Math.floor(rnd() * rooms.length)];
+    var dirs = [[1, 0], [-1, 0], [0, 1], [0, -1]];
+    // shuffle
+    for (var i = dirs.length - 1; i > 0; i--) {
+      var j = Math.floor(rnd() * (i + 1)); var t = dirs[i]; dirs[i] = dirs[j]; dirs[j] = t;
+    }
+    for (var d = 0; d < dirs.length; d++) {
+      var nx = from.gx + dirs[d][0], ny = from.gy + dirs[d][1];
+      if (nx < 0 || ny < 0 || nx >= G || ny >= G) continue;
+      if (occupied[key(nx, ny)] !== undefined) continue;
+      var nr = addRoom(nx, ny);
+      from.links.push({ to: nr.id, lock: null });
+      nr.links.push({ to: from.id, lock: null });
+      break;
+    }
+  }
+
+  /* a few loop edges so the ship isn't a pure tree (better flow, better PVS) */
+  var loops = 1 + Math.floor(rnd() * 3);
+  for (var L = 0; L < loops; L++) {
+    var a = rooms[Math.floor(rnd() * rooms.length)];
+    var cand = [];
+    for (var k = 0; k < rooms.length; k++) {
+      var b = rooms[k];
+      if (b.id === a.id) continue;
+      if (Math.abs(b.gx - a.gx) + Math.abs(b.gy - a.gy) !== 1) continue;
+      if (a.links.some(function (l) { return l.to === b.id; })) continue;
+      cand.push(b);
+    }
+    if (cand.length) {
+      var pick = cand[Math.floor(rnd() * cand.length)];
+      a.links.push({ to: pick.id, lock: null });
+      pick.links.push({ to: a.id, lock: null });
+    }
+  }
+
+  /* --- 2. graph distances from start --- */
+  function bfs(startId) {
+    var dist = {}; dist[startId] = 0;
+    var q = [startId];
+    while (q.length) {
+      var cur = q.shift();
+      var cl = rooms[cur].links;
+      for (var i = 0; i < cl.length; i++) {
+        if (dist[cl[i].to] === undefined) { dist[cl[i].to] = dist[cur] + 1; q.push(cl[i].to); }
+      }
+    }
+    return dist;
+  }
+  var dist = bfs(0);
+
+  /* --- 3. role assignment --- */
+  rooms[0].role = 'CRYOBAY';
+  var byDist = rooms.slice(1).sort(function (a, b) { return (dist[b.id] || 0) - (dist[a.id] || 0); });
+
+  var reactor = byDist[0];                       // deepest room = boss arena
+  reactor.role = 'REACTOR';
+  reactor.w = 24; reactor.d = 24;                 // arena prefab footprint
+
+  var hydro = null;
+  for (var h = 0; h < byDist.length; h++) {
+    var r = byDist[h];
+    if (r.role !== 'SPINE') continue;
+    if ((dist[r.id] || 0) < 2) continue;
+    if (r.links.some(function (l) { return l.to === reactor.id; })) continue; // not adjacent to arena
+    hydro = r; break;
+  }
+  if (!hydro) { for (var h2 = 0; h2 < byDist.length; h2++) { if (byDist[h2].role === 'SPINE') { hydro = byDist[h2]; break; } } }
+  hydro.role = 'HYDRO'; hydro.w = 20; hydro.d = 20;
+
+  var med = null;
+  for (var m = rooms.length - 1; m >= 1; m--) {
+    var rm = rooms[m];
+    if (rm.role === 'SPINE' && (dist[rm.id] || 0) >= 1 && (dist[rm.id] || 0) <= 3) { med = rm; break; }
+  }
+  if (med) med.role = 'MEDBAY';
+
+  for (var q2 = 1; q2 < rooms.length; q2++) {
+    if (rooms[q2].role === 'SPINE' && rnd() < 0.4) rooms[q2].role = 'HOLD';
+  }
+
+  /* --- 4. locks (lock-and-key on the graph) ---
+     Hydroponics blast door needs N0 (emergency lighting).
+     Reactor blast door needs N1 (atmosphere scrubber).
+     Applied to EVERY edge into the room so a loop edge can't bypass the gate. */
+  function lockRoom(roomId, keyName) {
+    for (var i = 0; i < rooms.length; i++) {
+      for (var j = 0; j < rooms[i].links.length; j++) {
+        if (rooms[i].links[j].to === roomId) rooms[i].links[j].lock = keyName;
+        if (i === roomId) rooms[i].links[j].lock = rooms[i].links[j].lock || null;
+      }
+    }
+    // outbound from the locked room stays open once you're inside
+    for (var o = 0; o < rooms[roomId].links.length; o++) rooms[roomId].links[o].lock = null;
+  }
+  lockRoom(hydro.id, 'N0');
+  lockRoom(reactor.id, 'N1');
+
+  /* --- 5. repair nodes --- */
+  rooms[0].nodes.push({ id: 'N0', name: 'Emergency Lighting', need: { scrap: CW.CFG.N0_SCRAP }, done: false });
+  hydro.nodes.push({ id: 'N1', name: 'Atmosphere Scrubber', need: { scrap: CW.CFG.N1_SCRAP, mesh: CW.CFG.N1_MESH }, done: false });
+  reactor.nodes.push({ id: 'N2', name: 'Coolant Regulator', need: { part: 'COOLANT_REGULATOR' }, done: false });
+
+  /* --- 6. resource placement, respecting the locks ---
+     N0's scrap must be reachable with NO keys. N1's scrap must be reachable with N0. */
+  var reach0 = CW.reachable(rooms, 0, {});
+  var reach1 = CW.reachable(rooms, 0, { N0: true });
+
+  var preRooms = reach0.filter(function (id) { return rooms[id].role !== 'REACTOR'; });
+  var midRooms = reach1.filter(function (id) { return rooms[id].role !== 'REACTOR'; });
+
+  var needPre = Math.ceil(CW.CFG.N0_SCRAP * CW.CFG.SCRAP_SLACK);
+  var needMid = Math.ceil(CW.CFG.N1_SCRAP * CW.CFG.SCRAP_SLACK);
+
+  function scatter(pool, count, type) {
+    for (var i = 0; i < count; i++) {
+      var rid = pool[Math.floor(rnd() * pool.length)];
+      rooms[rid].scrap.push({ type: type, taken: false });
+    }
+  }
+  scatter(preRooms, needPre, 'scrap');
+  scatter(midRooms, needMid, 'scrap');
+  scatter(midRooms, Math.ceil(CW.CFG.N1_MESH * 2), 'mesh');
+
+  /* crystals live in Hydroponics (Zone A) */
+  var nCry = 3 + Math.floor(rnd() * 2);
+  for (var c = 0; c < nCry; c++) hydro.crystals.push({ taken: false });
+
+  /* vents: enemy spawn points, 1-3 per non-start room */
+  for (var v = 1; v < rooms.length; v++) {
+    var nv = 1 + Math.floor(rnd() * 3);
+    for (var vi = 0; vi < nv; vi++) rooms[v].vents.push({ i: vi });
+  }
+
+  /* --- 7. world placement --- */
+  var C = CW.CFG.CELL;
+  for (var p = 0; p < rooms.length; p++) {
+    rooms[p].cx = (rooms[p].gx - (G - 1) / 2) * C;
+    rooms[p].cz = (rooms[p].gy - (G - 1) / 2) * C;
+  }
+
+  /* --- 8. PVS, computed once at generation time (free at runtime) --- */
+  var pvs = CW.computePVS(rooms);
+
+  var ship = {
+    code: norm ? (norm.slice(0, 3) + '-' + norm.slice(3, 6)) : 'CW-0000',
+    rooms: rooms, startRoom: 0, reactorRoom: reactor.id, hydroRoom: hydro.id,
+    medRoom: med ? med.id : -1, dist: dist, pvs: pvs
+  };
+  return ship;
+};
+
+/* reachable set given a key inventory */
+CW.reachable = function (rooms, startId, keys) {
+  var seen = {}; seen[startId] = true;
+  var q = [startId], out = [startId];
+  while (q.length) {
+    var cur = q.shift();
+    var links = rooms[cur].links;
+    for (var i = 0; i < links.length; i++) {
+      var l = links[i];
+      if (l.lock && !keys[l.lock]) continue;
+      if (seen[l.to]) continue;
+      seen[l.to] = true; q.push(l.to); out.push(l.to);
+    }
+  }
+  return out;
+};
+
+/* room visibility: self + depth-2 neighbourhood */
+CW.computePVS = function (rooms) {
+  var pvs = [];
+  for (var i = 0; i < rooms.length; i++) {
+    var set = {}; set[i] = true;
+    for (var a = 0; a < rooms[i].links.length; a++) {
+      var n1 = rooms[i].links[a].to; set[n1] = true;
+      for (var b = 0; b < rooms[n1].links.length; b++) set[rooms[n1].links[b].to] = true;
+    }
+    pvs.push(Object.keys(set).map(Number));
+  }
+  return pvs;
+};
+
+/* ---------- SOLVABILITY ---------- */
+CW.verifyShip = function (ship) {
+  var rooms = ship.rooms, fail = [];
+  function countIn(ids, type) {
+    var n = 0;
+    for (var i = 0; i < ids.length; i++) {
+      var s = rooms[ids[i]].scrap;
+      for (var j = 0; j < s.length; j++) if (s[j].type === type) n++;
+    }
+    return n;
+  }
+  // stage 0: no keys -> must be able to fund N0
+  var r0 = CW.reachable(rooms, ship.startRoom, {});
+  if (countIn(r0, 'scrap') < CW.CFG.N0_SCRAP) fail.push('N0 underfunded: ' + countIn(r0, 'scrap'));
+
+  // stage 1: with N0 -> hydro reachable, and N1 fundable
+  var r1 = CW.reachable(rooms, ship.startRoom, { N0: true });
+  if (r1.indexOf(ship.hydroRoom) < 0) fail.push('hydroponics unreachable with N0');
+  if (countIn(r1, 'scrap') < CW.CFG.N1_SCRAP) fail.push('N1 scrap underfunded: ' + countIn(r1, 'scrap'));
+  if (countIn(r1, 'mesh') < CW.CFG.N1_MESH) fail.push('N1 mesh underfunded');
+
+  // crystal zone must be reachable before the boss is required
+  var cry = 0;
+  for (var i = 0; i < r1.length; i++) cry += rooms[r1[i]].crystals.length;
+  if (cry < 1) fail.push('no crystals reachable pre-boss');
+
+  // stage 2: with N0+N1 -> reactor reachable
+  var r2 = CW.reachable(rooms, ship.startRoom, { N0: true, N1: true });
+  if (r2.indexOf(ship.reactorRoom) < 0) fail.push('reactor unreachable with N0+N1');
+
+  // the boss must not be trivially reachable before its gate
+  if (r1.indexOf(ship.reactorRoom) >= 0) fail.push('reactor reachable before N1 — gate bypassed');
+
+  // every room reachable eventually (no orphans)
+  if (r2.length !== rooms.length) fail.push('orphan rooms: ' + (rooms.length - r2.length));
+
+  return { ok: fail.length === 0, fail: fail };
+};
+
+/* ---------- ALERT / CRYSTAL ECONOMY ---------- */
+CW.alertFromHot = function (hot) {
+  if (hot <= 0) return 0;
+  if (hot <= 2) return 1;
+  if (hot <= 4) return 2;
+  return 3;
+};
+CW.spawnMult = function (alert) { return [1, 1.5, 2.0, 2.5][alert] || 1; };
+
+/* decays raw crystals; cells freeze the timer. returns {crystals, shattered} */
+CW.stepCrystals = function (list, dt, cellCap) {
+  var shattered = 0, out = [], frozen = 0;
+  for (var i = 0; i < list.length; i++) {
+    var c = list[i];
+    if (frozen < cellCap) { frozen++; out.push(c); continue; }
+    c.t += dt;
+    if (c.t >= CW.CFG.CRYSTAL_DECAY) { shattered++; continue; }
+    out.push(c);
+  }
+  return { crystals: out, shattered: shattered };
+};
+
+/* ---------- BOSS FSM (shared by all three bosses) ---------- */
+CW.BOSS_STATES = ['DORMANT', 'AGGRESSIVE', 'ARMORED', 'VENT', 'STAGGER', 'DEAD', 'FLED'];
+
+CW.newBoss = function (cfg) {
+  return {
+    state: 'DORMANT', t: 0, armor: CW.CFG.ARMOR_TIERS,
+    hp: (cfg && cfg.hp) || 1000, arena: CW.CFG.ARENA_TIMER,
+    cycle: 0, ventHit: false
+  };
+};
+
+/* input: {playerInArena, chargedHit, dmg} */
+CW.bossStep = function (b, dt, input) {
+  input = input || {};
+  b.t += dt;
+  if (b.state === 'DEAD' || b.state === 'FLED') return b;
+
+  if (b.state !== 'DORMANT') {
+    b.arena -= dt;
+    if (b.arena <= 0) { b.state = 'FLED'; b.t = 0; return b; }
+  }
+
+  switch (b.state) {
+    case 'DORMANT':
+      if (input.playerInArena) { b.state = 'AGGRESSIVE'; b.t = 0; }
+      break;
+
+    case 'AGGRESSIVE':
+      if (input.dmg) b.hp -= input.dmg;
+      // armored plates make normal damage floor out until vented
+      if (b.hp < b.armor * 200) b.hp = b.armor * 200;
+      if (b.t >= 8) { b.state = 'ARMORED'; b.t = 0; }
+      break;
+
+    case 'ARMORED':
+      // invulnerable signature attack window
+      if (b.t >= 3) { b.state = 'VENT'; b.t = 0; b.ventHit = false; }
+      break;
+
+    case 'VENT':
+      if (input.chargedHit) { b.ventHit = true; b.state = 'STAGGER'; b.t = 0; break; }
+      if (b.t >= CW.CFG.VENT_TIME) { b.state = 'AGGRESSIVE'; b.t = 0; b.cycle++; }
+      break;
+
+    case 'STAGGER':
+      if (input.dmg) b.hp -= input.dmg;
+      if (b.t >= CW.CFG.STAGGER_TIME) {
+        b.armor--;
+        b.t = 0;
+        if (b.armor <= 0) { b.state = 'DEAD'; }
+        else { b.state = 'AGGRESSIVE'; }
+      }
+      break;
+  }
+  return b;
+};
+
+/* ---------- REPAIR NODES ---------- */
+CW.canRepair = function (node, inv) {
+  var n = node.need;
+  if (n.scrap && (inv.scrap || 0) < n.scrap) return false;
+  if (n.mesh && (inv.mesh || 0) < n.mesh) return false;
+  if (n.part && !inv[n.part]) return false;
+  return true;
+};
+CW.doRepair = function (node, inv) {
+  if (!CW.canRepair(node, inv)) return false;
+  if (node.need.scrap) inv.scrap -= node.need.scrap;
+  if (node.need.mesh) inv.mesh -= node.need.mesh;
+  if (node.need.part) inv[node.need.part] = false;
+  node.done = true;
+  return true;
+};
+
+if (typeof module !== 'undefined' && module.exports) module.exports = CW;
+root.CW = CW;
+})(typeof window !== 'undefined' ? window : globalThis);
+
+</script>
+<script id="cw-game">
+/* ================= COLDWAKE — GAME LAYER ================= */
+(function () {
+'use strict';
+var CFG = CW.CFG;
+var $ = function (id) { return document.getElementById(id); };
+
+/* ---- constants ---- */
+var DOOR_W = 7, WALL_H = 7, WALL_T = 1, PLR_R = 0.85, ENEMY_CAP = 22;
+var SPEED = 11.5, CAM_OFF = { x: 0, y: 27, z: 21 };
+
+/* ---- state ---- */
+var renderer, scene, camera, clock, raycaster, groundPlane;
+var ship, world, colliders = [], roomGroups = [], doors = [], pickups = [], nodeObjs = [], vents = [];
+var player, boss = null, bossMesh = null, bossGroup = null;
+var enemies = [], projectiles = [], beams = [], particles = [];
+var running = false, ended = false;
+
+var S = {
+  hp: CFG.PLAYER_HP, o2: CFG.O2_MAX, scrap: 0, mesh: 0,
+  crystals: [], charges: 0, keys: {}, wep: 0,
+  alert: 0, alertF: 0, room: 0, invuln: 0, shake: 0,
+  charging: 0, cool: 0, spawnT: 0, part: false, powerT1: false
+};
+
+/* ================= AUDIO ================= */
+var AC = null, master = null, hum = null;
+function audioInit() {
+  if (AC) return;
+  try { AC = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return; }
+  master = AC.createGain(); master.gain.value = 0.5; master.connect(AC.destination);
+  var o = AC.createOscillator(), g = AC.createGain(), f = AC.createBiquadFilter();
+  o.type = 'sawtooth'; o.frequency.value = 42; f.type = 'lowpass'; f.frequency.value = 130;
+  g.gain.value = 0.05; o.connect(f); f.connect(g); g.connect(master); o.start();
+  hum = { osc: o, gain: g };
+}
+function blip(freq, dur, type, vol, slide) {
+  if (!AC) return;
+  var o = AC.createOscillator(), g = AC.createGain();
+  o.type = type || 'square'; o.frequency.setValueAtTime(freq, AC.currentTime);
+  if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, slide), AC.currentTime + dur);
+  g.gain.setValueAtTime(vol || 0.14, AC.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.0008, AC.currentTime + dur);
+  o.connect(g); g.connect(master); o.start(); o.stop(AC.currentTime + dur + 0.02);
+}
+function noise(dur, vol, fq) {
+  if (!AC) return;
+  var n = Math.floor(AC.sampleRate * dur), b = AC.createBuffer(1, n, AC.sampleRate), d = b.getChannelData(0);
+  for (var i = 0; i < n; i++) d[i] = (Math.random() * 2 - 1) * (1 - i / n);
+  var s = AC.createBufferSource(); s.buffer = b;
+  var f = AC.createBiquadFilter(); f.type = 'bandpass'; f.frequency.value = fq || 900;
+  var g = AC.createGain(); g.gain.value = vol || 0.16;
+  s.connect(f); f.connect(g); g.connect(master); s.start();
+}
+var SFX = {
+  shot: function () { blip(680, 0.06, 'square', 0.09, 220); },
+  torch: function () { noise(0.16, 0.14, 2600); },
+  charge: function () { blip(180, 0.9, 'sine', 0.07, 900); },
+  rifle: function () { blip(90, 0.5, 'sawtooth', 0.3, 1400); noise(0.34, 0.22, 500); },
+  hit: function () { noise(0.07, 0.1, 1700); },
+  hurt: function () { blip(150, 0.22, 'sawtooth', 0.2, 60); },
+  pick: function () { blip(880, 0.07, 'sine', 0.11, 1320); },
+  crystal: function () { blip(520, 0.3, 'triangle', 0.14, 1560); },
+  repair: function () { blip(300, 0.14, 'sine', 0.14, 620); setTimeout(function () { blip(620, 0.3, 'sine', 0.14, 940); }, 150); },
+  door: function () { noise(0.4, 0.13, 320); blip(70, 0.5, 'sine', 0.1, 130); },
+  alertUp: function () { blip(220, 0.16, 'square', 0.16, 440); setTimeout(function () { blip(300, 0.3, 'square', 0.13, 180); }, 140); },
+  boss: function () { blip(58, 1.5, 'sawtooth', 0.32, 30); noise(1.1, 0.2, 190); },
+  vent: function () { blip(760, 0.5, 'sine', 0.18, 1500); },
+  die: function () { blip(400, 0.7, 'sawtooth', 0.2, 40); noise(0.6, 0.2, 300); },
+  power: function () { [0, 160, 320, 520].forEach(function (d, i) { setTimeout(function () { blip(220 * (i + 1), 0.4, 'sine', 0.16, 330 * (i + 1)); }, d); }); }
+};
+
+/* ================= TOON MATERIALS ================= */
+var gradMap;
+function makeGradient() {
+  var steps = [40, 110, 190, 255], data = new Uint8Array(steps.length * 4);
+  for (var i = 0; i < steps.length; i++) { data[i * 4] = data[i * 4 + 1] = data[i * 4 + 2] = steps[i]; data[i * 4 + 3] = 255; }
+  var t = new THREE.DataTexture(data, steps.length, 1, THREE.RGBAFormat);
+  t.minFilter = t.magFilter = THREE.NearestFilter; t.generateMipmaps = false; t.needsUpdate = true;
+  return t;
+}
+function toon(color, emissive, eInt) {
+  return new THREE.MeshToonMaterial({
+    color: color, gradientMap: gradMap,
+    emissive: emissive === undefined ? 0x000000 : emissive,
+    emissiveIntensity: eInt === undefined ? 1 : eInt
+  });
+}
+function outlineMesh(geo, scale, color) {
+  var m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: color || 0x040709, side: THREE.BackSide }));
+  m.scale.multiplyScalar(scale || 1.07);
+  return m;
+}
+function withOutline(geo, mat, s) {
+  var g = new THREE.Group();
+  g.add(new THREE.Mesh(geo, mat));
+  g.add(outlineMesh(geo, s || 1.08));
+  return g;
+}
+
+/* ================= COLLISION ================= */
+function addBox(x0, x1, z0, z1, door) {
+  var c = { x0: Math.min(x0, x1), x1: Math.max(x0, x1), z0: Math.min(z0, z1), z1: Math.max(z0, z1), active: true, door: door || null };
+  colliders.push(c); return c;
+}
+function hitsWall(x, z, r) {
+  for (var i = 0; i < colliders.length; i++) {
+    var c = colliders[i];
+    if (!c.active) continue;
+    if (x + r < c.x0 || x - r > c.x1 || z + r < c.z0 || z - r > c.z1) continue;
+    var cx = Math.max(c.x0, Math.min(x, c.x1)), cz = Math.max(c.z0, Math.min(z, c.z1));
+    var dx = x - cx, dz = z - cz;
+    if (dx * dx + dz * dz < r * r) return c;
+  }
+  return null;
+}
+/* push a circle out of every overlapping box; a few iterations settles corners */
+function resolve(p, r) {
+  for (var it = 0; it < 8; it++) {
+    var moved = false;
+    for (var i = 0; i < colliders.length; i++) {
+      var c = colliders[i];
+      if (!c.active) continue;
+      if (p.x + r < c.x0 || p.x - r > c.x1 || p.z + r < c.z0 || p.z - r > c.z1) continue;
+      var cx = Math.max(c.x0, Math.min(p.x, c.x1)), cz = Math.max(c.z0, Math.min(p.z, c.z1));
+      var dx = p.x - cx, dz = p.z - cz, d2 = dx * dx + dz * dz;
+      if (d2 >= r * r) continue;
+      var d = Math.sqrt(d2);
+      if (d < 1e-5) {
+        // centre inside the box: eject along the shallowest axis
+        var l = Math.abs(p.x - c.x0), rr = Math.abs(c.x1 - p.x), u = Math.abs(p.z - c.z0), dn = Math.abs(c.z1 - p.z);
+        var m = Math.min(l, rr, u, dn);
+        if (m === l) p.x = c.x0 - r; else if (m === rr) p.x = c.x1 + r;
+        else if (m === u) p.z = c.z0 - r; else p.z = c.z1 + r;
+      } else {
+        var push = (r - d) / d;
+        p.x += dx * push; p.z += dz * push;
+      }
+      moved = true;
+    }
+    if (!moved) break;
+  }
+  /* Fallback: fully enclosed by overlapping boxes (prop jammed into a wall corner).
+     Iterative push-out oscillates there, so search outward for the nearest free spot.
+     Bounded to ~3 units so it can never hop a wall — if nothing is free, stay put. */
+  if (hitsWall(p.x, p.z, r)) {
+    for (var ring = 1; ring <= 6; ring++) {
+      var rad = ring * r * 0.62;
+      for (var a = 0; a < 14; a++) {
+        var ang = (a / 14) * Math.PI * 2 + ring * 0.41;
+        var nx = p.x + Math.cos(ang) * rad, nz = p.z + Math.sin(ang) * rad;
+        if (!hitsWall(nx, nz, r)) { p.x = nx; p.z = nz; return; }
+      }
+    }
+  }
+}
+/* substepped move — never tunnels, because no step exceeds 40% of the radius */
+function moveCircle(p, dx, dz, r) {
+  var dist = Math.hypot(dx, dz);
+  if (dist < 1e-6) return;
+  var steps = Math.max(1, Math.ceil(dist / (r * 0.4)));
+  for (var i = 0; i < steps; i++) {
+    p.x += dx / steps; p.z += dz / steps;
+    resolve(p, r);
+  }
+}
+
+/* ================= WORLD BUILD ================= */
+function dirOf(a, b) { return { x: b.gx - a.gx, z: b.gy - a.gy }; }
+
+function buildWorld() {
+  world = new THREE.Group(); scene.add(world);
+  colliders = []; roomGroups = []; doors = []; pickups = []; nodeObjs = []; vents = [];
+  var built = {};
+  var rnd = CW.rng(CW.hash(ship.code + 'geo'));
+
+  for (var i = 0; i < ship.rooms.length; i++) {
+    var R = ship.rooms[i];
+    var sec = CW.SECTORS[R.role] || CW.SECTORS.SPINE;
+    var G = new THREE.Group(); world.add(G); roomGroups.push(G);
+    var hw = R.w / 2, hd = R.d / 2;
+
+    /* floor */
+    var floorMat = toon(0x1b2732, sec.fog, 0.35);
+    var fl = new THREE.Mesh(new THREE.BoxGeometry(R.w, 0.5, R.d), floorMat);
+    fl.position.set(R.cx, -0.25, R.cz); G.add(fl);
+
+    /* floor accent ring so sectors read differently */
+    var ring = new THREE.Mesh(new THREE.RingGeometry(hw * 0.35, hw * 0.42, 28),
+      new THREE.MeshBasicMaterial({ color: sec.accent, transparent: true, opacity: 0.16, side: THREE.DoubleSide }));
+    ring.rotation.x = -Math.PI / 2; ring.position.set(R.cx, 0.03, R.cz); G.add(ring);
+
+    /* walls with door gaps */
+    var wallMat = toon(0x2c3d4c, sec.light, 0.12);
+    var sides = [
+      { d: { x: 1, z: 0 }, ax: 'z' }, { d: { x: -1, z: 0 }, ax: 'z' },
+      { d: { x: 0, z: 1 }, ax: 'x' }, { d: { x: 0, z: -1 }, ax: 'x' }
+    ];
+    for (var s = 0; s < sides.length; s++) {
+      var sd = sides[s];
+      var hasLink = R.links.some(function (l) {
+        var B = ship.rooms[l.to], dd = dirOf(R, B);
+        return dd.x === sd.d.x && dd.z === sd.d.z;
+      });
+      var segs;
+      if (sd.ax === 'z') {
+        var wx = R.cx + sd.d.x * (hw + WALL_T / 2);
+        segs = hasLink ? [[R.cz - hd, R.cz - DOOR_W / 2], [R.cz + DOOR_W / 2, R.cz + hd]] : [[R.cz - hd, R.cz + hd]];
+        for (var q = 0; q < segs.length; q++) {
+          var len = segs[q][1] - segs[q][0]; if (len <= 0.05) continue;
+          var mz = (segs[q][0] + segs[q][1]) / 2;
+          var m = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, len), wallMat);
+          m.position.set(wx, WALL_H / 2, mz); G.add(m);
+          addBox(wx - WALL_T / 2, wx + WALL_T / 2, segs[q][0], segs[q][1]);
+        }
+      } else {
+        var wz = R.cz + sd.d.z * (hd + WALL_T / 2);
+        segs = hasLink ? [[R.cx - hw, R.cx - DOOR_W / 2], [R.cx + DOOR_W / 2, R.cx + hw]] : [[R.cx - hw, R.cx + hw]];
+        for (var q2 = 0; q2 < segs.length; q2++) {
+          var len2 = segs[q2][1] - segs[q2][0]; if (len2 <= 0.05) continue;
+          var mx = (segs[q2][0] + segs[q2][1]) / 2;
+          var m2 = new THREE.Mesh(new THREE.BoxGeometry(len2, WALL_H, WALL_T), wallMat);
+          m2.position.set(mx, WALL_H / 2, wz); G.add(m2);
+          addBox(segs[q2][0], segs[q2][1], wz - WALL_T / 2, wz + WALL_T / 2);
+        }
+      }
+    }
+
+    /* sector light */
+    var pl = new THREE.PointLight(sec.light, 1.15, R.w * 2.1, 2);
+    pl.position.set(R.cx, WALL_H * 0.78, R.cz); G.add(pl);
+    R._light = pl;
+
+    /* props */
+    addProps(G, R, sec, rnd);
+
+    /* vent positions (deterministic) */
+    R.vpos = [];
+    for (var v = 0; v < R.vents.length; v++) {
+      var side = Math.floor(rnd() * 4), t = (rnd() - 0.5) * 0.7;
+      var vx = R.cx, vz = R.cz;
+      if (side === 0) { vx = R.cx + hw - 1.6; vz = R.cz + t * R.d; }
+      else if (side === 1) { vx = R.cx - hw + 1.6; vz = R.cz + t * R.d; }
+      else if (side === 2) { vz = R.cz + hd - 1.6; vx = R.cx + t * R.w; }
+      else { vz = R.cz - hd + 1.6; vx = R.cx + t * R.w; }
+      R.vpos.push({ x: vx, z: vz });
+      var vm = new THREE.Mesh(new THREE.BoxGeometry(2.2, 2.2, 0.3), toon(0x14202b, 0xff5a3c, 0.3));
+      vm.position.set(vx, 1.4, vz); vm.lookAt(R.cx, 1.4, R.cz); G.add(vm);
+    }
+
+    /* corridors (build once per pair) */
+    for (var l2 = 0; l2 < R.links.length; l2++) {
+      var B = ship.rooms[R.links[l2].to];
+      var pk = Math.min(R.id, B.id) + '-' + Math.max(R.id, B.id);
+      if (built[pk]) continue; built[pk] = 1;
+      buildCorridor(G, R, B, sec);
+    }
+
+    /* repair node */
+    for (var n = 0; n < R.nodes.length; n++) buildNode(G, R, R.nodes[n], sec);
+
+    /* pickups */
+    for (var sc = 0; sc < R.scrap.length; sc++) {
+      var px = R.cx + (rnd() - 0.5) * (R.w - 5), pz = R.cz + (rnd() - 0.5) * (R.d - 5);
+      buildPickup(G, R.scrap[sc].type, px, pz);
+    }
+    for (var cr = 0; cr < R.crystals.length; cr++) {
+      var qx = R.cx + (rnd() - 0.5) * (R.w - 5), qz = R.cz + (rnd() - 0.5) * (R.d - 5);
+      buildPickup(G, 'crystal', qx, qz);
+    }
+
+    /* rifle bench in cryobay */
+    if (R.role === 'CRYOBAY') {
+      var bench = new THREE.Mesh(new THREE.BoxGeometry(4.4, 1.6, 2.4), toon(0x2a4356, 0x4ad4ff, 0.5));
+      bench.position.set(R.cx, 0.8, R.cz - hd + 3.2); G.add(bench);
+      addBox(R.cx - 2.2, R.cx + 2.2, R.cz - hd + 2, R.cz - hd + 4.4);
+      pickups.push({ kind: 'bench', x: R.cx, z: R.cz - hd + 5.2, mesh: bench, r: 3.4, room: R.id });
+      var bl = new THREE.PointLight(0x4ad4ff, 1.3, 12, 2);
+      bl.position.set(R.cx, 3, R.cz - hd + 3.2); G.add(bl);
+    }
+  }
+
+  buildDoors();
+  buildStarfield();
+  if (ship.rooms[ship.reactorRoom]) buildBoss(ship.rooms[ship.reactorRoom]);
+}
+
+function buildCorridor(G, A, B, sec) {
+  var d = dirOf(A, B);
+  var mat = toon(0x243342, sec.fog, 0.25);
+  var wallMat = toon(0x2c3d4c, 0x334455, 0.1);
+  if (d.x !== 0) {
+    var x0 = A.cx + d.x * A.w / 2, x1 = B.cx - d.x * B.w / 2;
+    var lo = Math.min(x0, x1), hi = Math.max(x0, x1), len = hi - lo;
+    if (len < 0.2) return;
+    var f = new THREE.Mesh(new THREE.BoxGeometry(len, 0.5, DOOR_W), mat);
+    f.position.set((lo + hi) / 2, -0.25, A.cz); G.add(f);
+    [-1, 1].forEach(function (sgn) {
+      var wz = A.cz + sgn * (DOOR_W / 2 + WALL_T / 2);
+      var m = new THREE.Mesh(new THREE.BoxGeometry(len, WALL_H, WALL_T), wallMat);
+      m.position.set((lo + hi) / 2, WALL_H / 2, wz); G.add(m);
+      addBox(lo, hi, wz - WALL_T / 2, wz + WALL_T / 2);
+    });
+  } else {
+    var z0 = A.cz + d.z * A.d / 2, z1 = B.cz - d.z * B.d / 2;
+    var lo2 = Math.min(z0, z1), hi2 = Math.max(z0, z1), len2 = hi2 - lo2;
+    if (len2 < 0.2) return;
+    var f2 = new THREE.Mesh(new THREE.BoxGeometry(DOOR_W, 0.5, len2), mat);
+    f2.position.set(A.cx, -0.25, (lo2 + hi2) / 2); G.add(f2);
+    [-1, 1].forEach(function (sgn) {
+      var wx = A.cx + sgn * (DOOR_W / 2 + WALL_T / 2);
+      var m = new THREE.Mesh(new THREE.BoxGeometry(WALL_T, WALL_H, len2), wallMat);
+      m.position.set(wx, WALL_H / 2, (lo2 + hi2) / 2); G.add(m);
+      addBox(wx - WALL_T / 2, wx + WALL_T / 2, lo2, hi2);
+    });
+  }
+}
+
+/* a door sits in the wall gap of the LOCKED room, on every side an edge enters from */
+function buildDoors() {
+  for (var i = 0; i < ship.rooms.length; i++) {
+    var R = ship.rooms[i];
+    for (var l = 0; l < R.links.length; l++) {
+      var N = ship.rooms[R.links[l].to];
+      var rev = null;
+      for (var k = 0; k < N.links.length; k++) if (N.links[k].to === R.id) rev = N.links[k];
+      if (!rev || !rev.lock) continue;
+      /* edge N -> R is locked, so the door belongs on R's boundary facing N */
+      var d = dirOf(R, N), hw = R.w / 2, hd = R.d / 2;
+      var g = new THREE.Group();
+      var geo, px, pz;
+      if (d.x !== 0) { geo = new THREE.BoxGeometry(0.5, WALL_H - 0.4, DOOR_W); px = R.cx + d.x * (hw + 0.3); pz = R.cz; }
+      else { geo = new THREE.BoxGeometry(DOOR_W, WALL_H - 0.4, 0.5); px = R.cx; pz = R.cz + d.z * (hd + 0.3); }
+      var m = new THREE.Mesh(geo, toon(0x3a1c18, 0xff4530, 0.85));
+      m.position.set(px, (WALL_H - 0.4) / 2, pz);
+      world.add(m);
+      var lt = new THREE.PointLight(0xff4530, 1.1, 11, 2); lt.position.set(px, 3, pz); world.add(lt);
+      var col = (d.x !== 0)
+        ? addBox(px - 0.35, px + 0.35, pz - DOOR_W / 2, pz + DOOR_W / 2)
+        : addBox(px - DOOR_W / 2, px + DOOR_W / 2, pz - 0.35, pz + 0.35);
+      doors.push({ lock: rev.lock, mesh: m, light: lt, col: col, open: false, x: px, z: pz, room: R.id });
+    }
+  }
+}
+
+function addProps(G, R, sec, rnd) {
+  var n = 3 + Math.floor(rnd() * 5), hw = R.w / 2 - 2.5, hd = R.d / 2 - 2.5;
+  for (var i = 0; i < n; i++) {
+    var x = R.cx + (rnd() - 0.5) * hw * 2, z = R.cz + (rnd() - 0.5) * hd * 2;
+    if (Math.abs(x - R.cx) < 3.5 && Math.abs(z - R.cz) < 3.5) continue;
+    var g, w, dp, h;
+    if (sec.props === 'crates') { w = 1.8 + rnd() * 1.4; dp = w; h = 1.4 + rnd() * 1.6; g = toon(0x6a4c22, 0xd9a557, 0.18); }
+    else if (sec.props === 'planters') { w = 3.2; dp = 1.6; h = 1.1; g = toon(0x2c4a2e, 0x7fd98a, 0.4); }
+    else if (sec.props === 'pods') { w = 1.7; dp = 3.4; h = 1.9; g = toon(0x223a4a, 0x6fb7d8, 0.4); }
+    else if (sec.props === 'beds') { w = 2.2; dp = 4; h = 0.9; g = toon(0x28464a, 0x74e0d6, 0.3); }
+    else if (sec.props === 'coolant') { w = 2.2; dp = 2.2; h = 3.4; g = toon(0x4a2a15, 0xff9340, 0.35); }
+    else { w = 1.2; dp = 1.2; h = 2.6 + rnd() * 2; g = toon(0x33434f, 0x8899aa, 0.14); }
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, dp), g);
+    m.position.set(x, h / 2, z); G.add(m);
+    addBox(x - w / 2, x + w / 2, z - dp / 2, z + dp / 2);
+    if (sec.props === 'planters') {
+      var leaf = new THREE.Mesh(new THREE.SphereGeometry(1.1, 7, 5), toon(0x4e8f52, 0x7fd98a, 0.5));
+      leaf.position.set(x, h + 0.7, z); leaf.scale.y = 0.6; G.add(leaf);
+    }
+  }
+}
+
+function buildNode(G, R, node, sec) {
+  var g = new THREE.Group();
+  var base = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.9, 0.5, 8), toon(0x2b3d4c, sec.light, 0.2));
+  base.position.y = 0.25; g.add(base);
+  var col = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 3.2, 8), toon(0x3a4c5c, 0xff5a3c, 0.7));
+  col.position.y = 1.9; g.add(col);
+  var core = new THREE.Mesh(new THREE.IcosahedronGeometry(0.75, 0), new THREE.MeshBasicMaterial({ color: 0xff5a3c }));
+  core.position.y = 3.9; g.add(core);
+  var lt = new THREE.PointLight(0xff5a3c, 1.4, 14, 2); lt.position.y = 3.9; g.add(lt);
+  g.position.set(R.cx, 0, R.cz + (R.role === 'REACTOR' ? R.d / 2 - 3.5 : 0));
+  if (R.role === 'CRYOBAY') g.position.z = R.cz + R.d / 2 - 3.5;
+  G.add(g);
+  addBox(g.position.x - 1.6, g.position.x + 1.6, g.position.z - 1.6, g.position.z + 1.6);
+  nodeObjs.push({ node: node, room: R.id, x: g.position.x, z: g.position.z, g: g, core: core, col: col, light: lt, r: 3.6 });
+}
+
+function buildPickup(G, type, x, z) {
+  var g = new THREE.Group(), mesh, light = null;
+  if (type === 'crystal') {
+    mesh = new THREE.Mesh(new THREE.OctahedronGeometry(0.62, 0), new THREE.MeshBasicMaterial({ color: 0xb6ff9e }));
+    light = new THREE.PointLight(0x8fff7a, 1.1, 8, 2); light.position.y = 1.1; g.add(light);
+  } else if (type === 'mesh') {
+    mesh = new THREE.Mesh(new THREE.TorusGeometry(0.5, 0.16, 6, 10), toon(0x9fd8ff, 0x4ad4ff, 0.7));
+  } else {
+    mesh = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.62, 0.62), toon(0xd9b071, 0xffd08a, 0.45));
+  }
+  mesh.position.y = 1.0; g.add(mesh);
+  g.position.set(x, 0, z); G.add(g);
+  pickups.push({ kind: type, x: x, z: z, g: g, mesh: mesh, light: light, taken: false, r: type === 'crystal' ? 2.0 : 1.9 });
+}
+
+function buildStarfield() {
+  var geo = new THREE.BufferGeometry(), pos = [], n = 900;
+  for (var i = 0; i < n; i++) {
+    var th = Math.random() * Math.PI * 2, ph = Math.acos(2 * Math.random() - 1), r = 320 + Math.random() * 130;
+    pos.push(Math.sin(ph) * Math.cos(th) * r, Math.abs(Math.cos(ph)) * r * 0.55 + 40, Math.sin(ph) * Math.sin(th) * r);
+  }
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  scene.add(new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xcfe3f2, size: 1.5, sizeAttenuation: false })));
+}
+
+/* ================= BOSS ================= */
+function buildBoss(R) {
+  boss = CW.newBoss({ hp: 1000 });
+  bossGroup = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.SphereGeometry(3.1, 12, 9), toon(0x5a2e3a, 0x2a0d14, 0.5));
+  body.scale.set(1, 0.78, 1.16); body.position.y = 2.6; bossGroup.add(body);
+  bossGroup.add(outlineMesh(new THREE.SphereGeometry(3.1, 12, 9), 1.06).translateY(0));
+  bossGroup.children[1].scale.set(1.06, 0.83, 1.23); bossGroup.children[1].position.y = 2.6;
+
+  var head = new THREE.Mesh(new THREE.ConeGeometry(1.5, 3.0, 7), toon(0x7a3c48, 0x3a1520, 0.5));
+  head.rotation.x = Math.PI / 2.1; head.position.set(0, 2.9, 3.1); bossGroup.add(head);
+
+  /* dorsal sacs — the VENT tell */
+  var sacs = [];
+  for (var i = 0; i < 5; i++) {
+    var a = (i / 5) * Math.PI * 2;
+    var s = new THREE.Mesh(new THREE.SphereGeometry(0.92, 8, 6),
+      new THREE.MeshBasicMaterial({ color: 0x3a1a20 }));
+    s.position.set(Math.cos(a) * 1.8, 4.5, Math.sin(a) * 1.8);
+    bossGroup.add(s); sacs.push(s);
+  }
+  /* legs */
+  for (var L = 0; L < 6; L++) {
+    var ang = (L / 6) * Math.PI * 2;
+    var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.1, 4.4, 5), toon(0x46242c));
+    leg.position.set(Math.cos(ang) * 3.2, 1.9, Math.sin(ang) * 3.2);
+    leg.rotation.z = Math.cos(ang) * 0.55; leg.rotation.x = -Math.sin(ang) * 0.55;
+    bossGroup.add(leg);
+  }
+  var gl = new THREE.PointLight(0xff5a3c, 1.6, 26, 2); gl.position.y = 4.5; bossGroup.add(gl);
+  bossGroup.position.set(R.cx, 0, R.cz);
+  world.add(bossGroup);
+  bossMesh = { group: bossGroup, sacs: sacs, light: gl, body: body, x: R.cx, z: R.cz, r: 3.4 };
+  addBox(R.cx - 2.4, R.cx + 2.4, R.cz - 2.4, R.cz + 2.4);
+}
+
+/* ================= PLAYER ================= */
+function buildPlayer(R) {
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.72, 1.7, 8), toon(0x3f6f8e, 0x0d2432, 0.5));
+  body.position.y = 1.05; g.add(body);
+  var bo = outlineMesh(new THREE.CylinderGeometry(0.62, 0.72, 1.7, 8), 1.09); bo.position.y = 1.05; g.add(bo);
+  var head = new THREE.Mesh(new THREE.SphereGeometry(0.52, 10, 8), toon(0x5a90ae, 0x0d2432, 0.4));
+  head.position.y = 2.2; g.add(head);
+  var ho = outlineMesh(new THREE.SphereGeometry(0.52, 10, 8), 1.1); ho.position.y = 2.2; g.add(ho);
+  var visor = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8, 0, Math.PI), new THREE.MeshBasicMaterial({ color: 0x9fe8ff }));
+  visor.position.set(0, 2.22, 0.18); visor.rotation.y = Math.PI; g.add(visor);
+  var gun = new THREE.Mesh(new THREE.BoxGeometry(0.24, 0.24, 1.5), toon(0x2b3843, 0x111820, 0.4));
+  gun.position.set(0.42, 1.35, 0.65); g.add(gun);
+  var lamp = new THREE.PointLight(0xa8dcff, 1.05, 15, 2); lamp.position.y = 2.4; g.add(lamp);
+  g.position.set(R.cx, 0, R.cz + 3);
+  world.add(g);
+  player = { g: g, pos: { x: R.cx, z: R.cz + 3 }, aim: { x: 0, z: 1 }, gun: gun, visor: visor, lamp: lamp, fire: 0 };
+}
+
+/* ================= ENEMIES ================= */
+var ETYPE = {
+  skitter: { hp: 20, spd: 8.2, r: 0.62, dmg: 7, color: 0x8a4a5c, atk: 0.75, range: 1.5 },
+  clinger: { hp: 32, spd: 6.4, r: 0.72, dmg: 11, color: 0x6a4a8a, atk: 1.1, range: 1.7 },
+  bloater: { hp: 44, spd: 3.4, r: 1.05, dmg: 26, color: 0x7a7a3a, atk: 0.1, range: 2.6, boom: true },
+  stalker: { hp: 120, spd: 9.0, r: 0.9, dmg: 16, color: 0xb03a2a, atk: 0.85, range: 2.0 }
+};
+function spawnEnemy(kind, x, z) {
+  if (enemies.length >= ENEMY_CAP) return;
+  var T = ETYPE[kind];
+  /* vent mouths sit close to walls and props — push the body clear before it exists */
+  var sp = { x: x, z: z };
+  resolve(sp, T.r);
+  if (hitsWall(sp.x, sp.z, T.r * 0.9)) return;
+  x = sp.x; z = sp.z;
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.SphereGeometry(T.r * 1.15, 8, 6), toon(T.color, T.color, 0.28));
+  body.scale.y = 0.8; body.position.y = T.r; g.add(body);
+  var bo = outlineMesh(new THREE.SphereGeometry(T.r * 1.15, 8, 6), 1.14); bo.scale.y = 0.8 * 1.14; bo.position.y = T.r; g.add(bo);
+  var eye = new THREE.Mesh(new THREE.SphereGeometry(T.r * 0.3, 6, 5), new THREE.MeshBasicMaterial({ color: kind === 'stalker' ? 0xffdd33 : 0xff5544 }));
+  eye.position.set(0, T.r * 1.15, T.r * 0.95); g.add(eye);
+  for (var L = 0; L < 4; L++) {
+    var a = (L / 4) * Math.PI * 2 + 0.7;
+    var leg = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.04, T.r * 1.9, 4), toon(0x241a20));
+    leg.position.set(Math.cos(a) * T.r, T.r * 0.5, Math.sin(a) * T.r);
+    leg.rotation.z = Math.cos(a) * 0.7; leg.rotation.x = -Math.sin(a) * 0.7; g.add(leg);
+  }
+  if (kind === 'stalker') { var sl = new THREE.PointLight(0xffaa33, 1.1, 10, 2); sl.position.y = 1.4; g.add(sl); }
+  g.position.set(x, 0, z); world.add(g);
+  enemies.push({ kind: kind, T: T, hp: T.hp, g: g, pos: { x: x, z: z }, cd: 0, wob: Math.random() * 9, flash: 0, body: body });
+}
+function killEnemy(e, i) {
+  for (var p = 0; p < 6; p++) burst(e.pos.x, 1, e.pos.z, e.T.color);
+  if (e.T.boom) {
+    var d = Math.hypot(player.pos.x - e.pos.x, player.pos.z - e.pos.z);
+    if (d < 4.2) hurtPlayer(e.T.dmg * (1 - d / 4.2));
+    for (var b = 0; b < 12; b++) burst(e.pos.x, 1.2, e.pos.z, 0xffcc44);
+    noise(0.4, 0.24, 260);
+  }
+  world.remove(e.g); enemies.splice(i, 1);
+  SFX.die();
+}
+
+/* ================= FX ================= */
+function burst(x, y, z, color) {
+  var m = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.22, 0.22), new THREE.MeshBasicMaterial({ color: color }));
+  m.position.set(x, y, z); world.add(m);
+  particles.push({ m: m, vx: (Math.random() - 0.5) * 9, vy: Math.random() * 7 + 1.5, vz: (Math.random() - 0.5) * 9, t: 0 });
+}
+function shoot(dmg, color, speed, pierce) {
+  var m = new THREE.Mesh(new THREE.SphereGeometry(0.19, 6, 5), new THREE.MeshBasicMaterial({ color: color }));
+  m.position.set(player.pos.x + player.aim.x * 1.3, 1.35, player.pos.z + player.aim.z * 1.3);
+  world.add(m);
+  projectiles.push({ m: m, dx: player.aim.x, dz: player.aim.z, spd: speed, dmg: dmg, t: 0, pierce: !!pierce, hostile: false });
+}
+function enemyShot(x, z, dx, dz, dmg) {
+  var m = new THREE.Mesh(new THREE.SphereGeometry(0.28, 6, 5), new THREE.MeshBasicMaterial({ color: 0xff8a4a }));
+  m.position.set(x, 1.5, z); world.add(m);
+  projectiles.push({ m: m, dx: dx, dz: dz, spd: 20, dmg: dmg, t: 0, hostile: true });
+}
+function fireBeam() {
+  var len = 46;
+  var geo = new THREE.CylinderGeometry(0.3, 0.3, len, 8);
+  var m = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color: 0xc9a7ff, transparent: true, opacity: 0.92 }));
+  m.rotation.order = 'YXZ';
+  m.rotation.y = Math.atan2(player.aim.x, player.aim.z);
+  m.rotation.x = Math.PI / 2;
+  m.position.set(player.pos.x + player.aim.x * len / 2, 1.4, player.pos.z + player.aim.z * len / 2);
+  world.add(m);
+  beams.push({ m: m, t: 0 });
+  SFX.rifle(); S.shake = 0.55;
+
+  /* everything on the line dies */
+  for (var i = enemies.length - 1; i >= 0; i--) {
+    var e = enemies[i];
+    var rx = e.pos.x - player.pos.x, rz = e.pos.z - player.pos.z;
+    var along = rx * player.aim.x + rz * player.aim.z;
+    if (along < 0 || along > len) continue;
+    var perp = Math.abs(rx * player.aim.z - rz * player.aim.x);
+    if (perp < 1.7 + e.T.r) { e.hp = 0; killEnemy(e, i); }
+  }
+  /* boss */
+  if (boss && bossMesh && boss.state !== 'DEAD') {
+    var bx = bossMesh.x - player.pos.x, bz = bossMesh.z - player.pos.z;
+    var al = bx * player.aim.x + bz * player.aim.z;
+    var pp = Math.abs(bx * player.aim.z - bz * player.aim.x);
+    if (al > 0 && al < len && pp < 3.6) {
+      if (boss.state === 'VENT') { boss._charged = true; SFX.vent(); toast('ARMOUR PLATE BREACHED'); }
+      else toast('CARAPACE HELD — HIT IT DURING THE VENT');
+    }
+  }
+}
+
+/* ================= HELPERS ================= */
+function toast(msg) {
+  var t = $('toast'); t.textContent = msg; t.style.opacity = 1;
+  clearTimeout(t._h); t._h = setTimeout(function () { t.style.opacity = 0; }, 2300);
+}
+function hurtPlayer(dmg) {
+  if (S.invuln > 0 || ended) return;
+  S.hp -= dmg; S.invuln = 0.42; S.shake = Math.min(1, dmg / 22);
+  $('flash').style.opacity = Math.min(0.95, dmg / 26); SFX.hurt();
+  setTimeout(function () { $('flash').style.opacity = 0; }, 130);
+  if (S.hp <= 0) { S.hp = 0; endGame(false, 'HULL BREACH', 'Your suit failed in the dark. The ship keeps drifting.'); }
+}
+function roomAt(x, z) {
+  for (var i = 0; i < ship.rooms.length; i++) {
+    var R = ship.rooms[i];
+    if (Math.abs(x - R.cx) <= R.w / 2 + 0.5 && Math.abs(z - R.cz) <= R.d / 2 + 0.5) return i;
+  }
+  return -1;
+}
+function hotCount() { return Math.max(0, S.crystals.length - CFG.CELL_CAP); }
+
+/* ================= INPUT ================= */
+var keys = {}, mouse = { x: 0, y: 0 }, firing = false, charging = false;
+var stick = { l: { a: false, x: 0, y: 0, id: null }, r: { a: false, x: 0, y: 0, id: null } };
+var isTouch = ('ontouchstart' in window) || navigator.maxTouchPoints > 0;
+
+function initInput() {
+  window.addEventListener('keydown', function (e) {
+    keys[e.code] = true;
+    if (e.code === 'Digit1') setWep(0);
+    if (e.code === 'Digit2') setWep(1);
+    if (e.code === 'Digit3') setWep(2);
+    if (e.code === 'KeyE') doInteract();
+    if (['Space', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].indexOf(e.code) >= 0) e.preventDefault();
+  });
+  window.addEventListener('keyup', function (e) { keys[e.code] = false; });
+  var cv = $('cv');
+  cv.addEventListener('mousemove', function (e) {
+    mouse.x = (e.clientX / window.innerWidth) * 2 - 1;
+    mouse.y = -(e.clientY / window.innerHeight) * 2 + 1;
+  });
+  cv.addEventListener('mousedown', function (e) {
+    audioInit();
+    if (e.button === 0) firing = true;
+    if (e.button === 2) { charging = true; setWep(2); }
+  });
+  window.addEventListener('mouseup', function (e) {
+    if (e.button === 0) firing = false;
+    if (e.button === 2) releaseCharge();
+  });
+  cv.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+
+  /* weapon buttons */
+  var ws = document.querySelectorAll('.wep');
+  for (var i = 0; i < ws.length; i++) {
+    (function (el) {
+      el.addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); setWep(parseInt(el.dataset.w, 10)); });
+    })(ws[i]);
+  }
+  $('act').addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); doInteract(); });
+
+  if (isTouch) {
+    document.body.classList.add('touch');
+    bindStick($('stickL'), 'l');
+    bindStick($('stickR'), 'r');
+  }
+}
+function bindStick(el, which) {
+  var knob = el.querySelector('i');
+  function set(e) {
+    var r = el.getBoundingClientRect();
+    var dx = e.clientX - (r.left + r.width / 2), dy = e.clientY - (r.top + r.height / 2);
+    var max = r.width / 2, d = Math.hypot(dx, dy);
+    if (d > max) { dx = dx / d * max; dy = dy / d * max; }
+    stick[which].x = dx / max; stick[which].y = dy / max;
+    knob.style.transform = 'translate(' + dx + 'px,' + dy + 'px)';
+  }
+  el.addEventListener('pointerdown', function (e) {
+    e.preventDefault(); audioInit();
+    stick[which].a = true; stick[which].id = e.pointerId; el.setPointerCapture(e.pointerId); set(e);
+  });
+  el.addEventListener('pointermove', function (e) { if (stick[which].a && stick[which].id === e.pointerId) { e.preventDefault(); set(e); } });
+  function end(e) {
+    if (stick[which].id !== e.pointerId) return;
+    stick[which].a = false; stick[which].x = stick[which].y = 0; stick[which].id = null;
+    knob.style.transform = 'translate(0,0)';
+    if (which === 'r' && S.wep === 2) releaseCharge();
+  }
+  el.addEventListener('pointerup', end);
+  el.addEventListener('pointercancel', end);
+}
+function setWep(w) {
+  if (w === 2 && S.charges <= 0) { toast('RIFLE HAS NO CHARGE — FIND VOIDGLASS'); return; }
+  S.wep = w; charging = false; S.charging = 0;
+  var ws = document.querySelectorAll('.wep');
+  for (var i = 0; i < ws.length; i++) ws[i].classList.toggle('sel', i === w);
+  $('chg').style.display = w === 2 ? 'block' : 'none';
+}
+function releaseCharge() {
+  if (S.wep === 2 && S.charging >= 1) { S.charges--; fireBeam(); $('rifleAmt').textContent = S.charges; if (S.charges <= 0) setWep(0); }
+  charging = false; S.charging = 0; $('chgF').style.width = '0%';
+}
+
+/* ================= INTERACT ================= */
+var focus = null;
+function findFocus() {
+  /* Priority beats proximity. A node you can actually finish always wins the prompt,
+     otherwise crystals scattered around a repair node steal the interact. */
+  var best = null, bp = 99, bd = 1e9;
+  function consider(o, r, prio, label, sub) {
+    var d = Math.hypot(player.pos.x - o.x, player.pos.z - o.z);
+    if (d >= r) return;
+    if (prio > bp) return;
+    if (prio === bp && d >= bd) return;
+    bp = prio; bd = d; best = { o: o, label: label, sub: sub };
+  }
+  for (var i = 0; i < nodeObjs.length; i++) {
+    var N = nodeObjs[i];
+    if (N.node.done) continue;
+    var need = N.node.need, txt;
+    if (need.part) txt = S.part ? 'INSTALL COOLANT REGULATOR' : 'MISSING: COOLANT REGULATOR';
+    else txt = 'REPAIR ' + N.node.name.toUpperCase();
+    var sub = need.part ? (S.part ? 'READY' : 'HELD BY THE BROODMOTHER')
+      : 'SCRAP ' + S.scrap + '/' + (need.scrap || 0) + (need.mesh ? '  MESH ' + S.mesh + '/' + need.mesh : '');
+    var inv = { scrap: S.scrap, mesh: S.mesh }; inv.COOLANT_REGULATOR = S.part;
+    consider(N, N.r, CW.canRepair(N.node, inv) ? 0 : 2, txt, sub);
+  }
+  for (var p = 0; p < pickups.length; p++) {
+    var P = pickups[p];
+    if (P.kind === 'bench') consider(P, P.r, 1, 'CHARGE RIFLE', S.crystals.length ? S.crystals.length + ' VOIDGLASS AVAILABLE' : 'NO VOIDGLASS');
+    else if (P.kind === 'crystal' && !P.taken) consider(P, P.r, 1, 'EXTRACT VOIDGLASS', 'RAISES HIVE ALERT');
+  }
+  focus = best;
+  var act = $('act');
+  if (best) {
+    act.style.display = 'block';
+    act.innerHTML = (isTouch ? '' : '[E] ') + best.label + '<small>' + (best.sub || '') + '</small>';
+  } else act.style.display = 'none';
+}
+function doInteract() {
+  if (!focus || !running) return;
+  var o = focus.o;
+  if (o.node) {
+    var inv = { scrap: S.scrap, mesh: S.mesh }; inv.COOLANT_REGULATOR = S.part;
+    if (!CW.canRepair(o.node, inv)) { toast('INSUFFICIENT MATERIALS'); return; }
+    CW.doRepair(o.node, inv);
+    S.scrap = inv.scrap; S.mesh = inv.mesh; if (o.node.need.part) S.part = false;
+    S.keys[o.node.id] = true;
+    o.core.material.color.setHex(0x7dffa0); o.col.material.emissive.setHex(0x2bff7a); o.light.color.setHex(0x4dff8a);
+    SFX.repair(); openDoors();
+    if (o.node.id === 'N0') { brightenShip(); toast('EMERGENCY LIGHTING RESTORED — BLAST DOORS RESPOND'); }
+    if (o.node.id === 'N1') { toast('ATMOSPHERE SCRUBBER ONLINE — O2 STABLE'); }
+    if (o.node.id === 'N2') { S.powerT1 = true; SFX.power(); endGame(true); }
+    return;
+  }
+  if (o.kind === 'crystal') {
+    o.taken = true; o.g.visible = false;
+    S.crystals.push({ t: 0 });
+    SFX.crystal();
+    var was = S.alert; S.alert = CW.alertFromHot(hotCount());
+    toast('VOIDGLASS EXTRACTED' + (hotCount() > 0 ? ' — IT IS HOT. THE HIVE CAN SMELL IT.' : ''));
+    if (S.alert > was) SFX.alertUp();
+    return;
+  }
+  if (o.kind === 'bench') {
+    if (!S.crystals.length) { toast('NO VOIDGLASS TO BURN'); return; }
+    var n = 0;
+    while (S.crystals.length && S.charges < CFG.RIFLE_CAP) { S.crystals.pop(); S.charges++; n++; }
+    if (!n) { toast('RIFLE AT CAPACITY (' + CFG.RIFLE_CAP + ')'); return; }
+    $('rifleAmt').textContent = S.charges;
+    S.alert = CW.alertFromHot(hotCount());
+    SFX.power(); toast('RIFLE CHARGED ×' + n);
+  }
+}
+function openDoors() {
+  for (var i = 0; i < doors.length; i++) {
+    var d = doors[i];
+    if (d.open || !S.keys[d.lock]) continue;
+    d.open = true; d.col.active = false; d.mesh.visible = false; d.light.color.setHex(0x4dff8a); d.light.intensity = 0.5;
+    SFX.door();
+  }
+}
+function brightenShip() {
+  for (var i = 0; i < ship.rooms.length; i++) if (ship.rooms[i]._light) ship.rooms[i]._light.intensity = 2.1;
+}
+
+/* ================= SPAWNING ================= */
+function spawnTick(dt) {
+  S.spawnT -= dt;
+  if (S.spawnT > 0) return;
+  var mult = CW.spawnMult(S.alert);
+  S.spawnT = (2.9 / mult) * (0.7 + Math.random() * 0.6);
+  if (enemies.length >= ENEMY_CAP) return;
+  var pool = ship.pvs[S.room] || [S.room];
+  var cand = [];
+  for (var i = 0; i < pool.length; i++) {
+    var R = ship.rooms[pool[i]];
+    if (!R || !R.vpos) continue;
+    for (var v = 0; v < R.vpos.length; v++) {
+      var d = Math.hypot(R.vpos[v].x - player.pos.x, R.vpos[v].z - player.pos.z);
+      if (d > 9 && d < 62) cand.push(R.vpos[v]);
+    }
+  }
+  if (!cand.length) return;
+  var p = cand[Math.floor(Math.random() * cand.length)];
+  var roll = Math.random(), kind;
+  if (S.alert >= 2 && roll < 0.14) kind = 'stalker';
+  else if (roll < 0.5) kind = 'skitter';
+  else if (roll < 0.78) kind = 'clinger';
+  else kind = 'bloater';
+  spawnEnemy(kind, p.x, p.z);
+}
+
+/* ================= UPDATE ================= */
+function update(dt) {
+  if (!running) return;
+
+  /* --- input vector --- */
+  var mx = 0, mz = 0;
+  if (keys.KeyW || keys.ArrowUp) mz -= 1;
+  if (keys.KeyS || keys.ArrowDown) mz += 1;
+  if (keys.KeyA || keys.ArrowLeft) mx -= 1;
+  if (keys.KeyD || keys.ArrowRight) mx += 1;
+  if (stick.l.a) { mx += stick.l.x; mz += stick.l.y; }
+  var ml = Math.hypot(mx, mz);
+  if (ml > 1) { mx /= ml; mz /= ml; }
+
+  moveCircle(player.pos, mx * SPEED * dt, mz * SPEED * dt, PLR_R);
+  player.g.position.set(player.pos.x, 0, player.pos.z);
+
+  /* --- aim --- */
+  if (stick.r.a && Math.hypot(stick.r.x, stick.r.y) > 0.28) {
+    var rl = Math.hypot(stick.r.x, stick.r.y);
+    player.aim.x = stick.r.x / rl; player.aim.z = stick.r.y / rl;
+    if (S.wep === 2) charging = true; else firing = true;
+  } else if (!isTouch) {
+    raycaster.setFromCamera(mouse, camera);
+    var pt = new THREE.Vector3();
+    if (raycaster.ray.intersectPlane(groundPlane, pt)) {
+      var ax = pt.x - player.pos.x, az = pt.z - player.pos.z, al = Math.hypot(ax, az);
+      if (al > 0.4) { player.aim.x = ax / al; player.aim.z = az / al; }
+    }
+  } else { if (S.wep !== 2) firing = false; }
+  /* model faces +Z, so this yaw points it exactly along the aim vector */
+  player.g.rotation.y = Math.atan2(player.aim.x, player.aim.z);
+
+  /* --- firing --- */
+  S.cool -= dt;
+  if (S.wep === 2) {
+    if (charging) {
+      S.charging = Math.min(1, S.charging + dt / 1.2);
+      $('chgF').style.width = (S.charging * 100) + '%';
+      if (S.charging === 1 && !S._chgDone) { S._chgDone = true; SFX.charge(); }
+    } else { S._chgDone = false; }
+  } else if (firing && S.cool <= 0) {
+    if (S.wep === 0) { shoot(12, 0xffe08a, 52); S.cool = 0.155; SFX.shot(); }
+    else {
+      S.cool = 0.42; SFX.torch();
+      for (var i = enemies.length - 1; i >= 0; i--) {
+        var e = enemies[i];
+        var rx = e.pos.x - player.pos.x, rz = e.pos.z - player.pos.z, d = Math.hypot(rx, rz);
+        if (d > 3.2 + e.T.r) continue;
+        if ((rx / d) * player.aim.x + (rz / d) * player.aim.z < 0.35) continue;
+        e.hp -= 42; e.flash = 0.14; SFX.hit();
+        if (e.hp <= 0) killEnemy(e, i);
+      }
+      for (var b = 0; b < 3; b++) burst(player.pos.x + player.aim.x * 2.4, 1.3, player.pos.z + player.aim.z * 2.4, 0xffaa44);
+    }
+  }
+
+  /* --- projectiles --- */
+  for (var p = projectiles.length - 1; p >= 0; p--) {
+    var P = projectiles[p];
+    var step = P.spd * dt;
+    P.m.position.x += P.dx * step; P.m.position.z += P.dz * step;
+    P.t += dt;
+    var dead = P.t > 2.2 || !!hitsWall(P.m.position.x, P.m.position.z, 0.2);
+    if (!dead) {
+      if (P.hostile) {
+        if (Math.hypot(P.m.position.x - player.pos.x, P.m.position.z - player.pos.z) < PLR_R + 0.4) { hurtPlayer(P.dmg); dead = true; }
+      } else {
+        for (var q = enemies.length - 1; q >= 0; q--) {
+          var E = enemies[q];
+          if (Math.hypot(P.m.position.x - E.pos.x, P.m.position.z - E.pos.z) < E.T.r + 0.4) {
+            E.hp -= P.dmg; E.flash = 0.12; SFX.hit();
+            burst(E.pos.x, 1.1, E.pos.z, 0xffaa66);
+            if (E.hp <= 0) killEnemy(E, q);
+            if (!P.pierce) dead = true;
+            break;
+          }
+        }
+        if (!dead && boss && boss.state !== 'DEAD' && bossMesh) {
+          if (Math.hypot(P.m.position.x - bossMesh.x, P.m.position.z - bossMesh.z) < 3.4) {
+            boss._dmg = (boss._dmg || 0) + P.dmg; dead = true;
+            burst(bossMesh.x + (Math.random() - .5) * 4, 3, bossMesh.z + (Math.random() - .5) * 4, 0xff8866);
+          }
+        }
+      }
+    }
+    if (dead) { world.remove(P.m); projectiles.splice(p, 1); }
+  }
+  for (var bm = beams.length - 1; bm >= 0; bm--) {
+    beams[bm].t += dt;
+    beams[bm].m.material.opacity = Math.max(0, 0.92 - beams[bm].t * 4.5);
+    if (beams[bm].t > 0.24) { world.remove(beams[bm].m); beams.splice(bm, 1); }
+  }
+  for (var pa = particles.length - 1; pa >= 0; pa--) {
+    var PA = particles[pa]; PA.t += dt;
+    PA.vy -= 22 * dt;
+    PA.m.position.x += PA.vx * dt; PA.m.position.y += PA.vy * dt; PA.m.position.z += PA.vz * dt;
+    PA.m.scale.setScalar(Math.max(0.01, 1 - PA.t * 1.7));
+    if (PA.t > 0.6) { world.remove(PA.m); particles.splice(pa, 1); }
+  }
+
+  /* --- enemies --- */
+  for (var n = enemies.length - 1; n >= 0; n--) {
+    var EN = enemies[n];
+    EN.wob += dt * 11; EN.cd -= dt;
+    if (EN.flash > 0) { EN.flash -= dt; EN.body.material.emissiveIntensity = 1.4; }
+    else EN.body.material.emissiveIntensity = 0.28;
+    var tx = player.pos.x - EN.pos.x, tz = player.pos.z - EN.pos.z, td = Math.hypot(tx, tz);
+    if (td > 76) { world.remove(EN.g); enemies.splice(n, 1); continue; }
+    if (td > EN.T.range) {
+      var ux = tx / td, uz = tz / td;
+      var before = { x: EN.pos.x, z: EN.pos.z };
+      moveCircle(EN.pos, ux * EN.T.spd * dt, uz * EN.T.spd * dt, EN.T.r);
+      /* wall-stuck: try sliding perpendicular so they path around corners */
+      if (Math.hypot(EN.pos.x - before.x, EN.pos.z - before.z) < EN.T.spd * dt * 0.3) {
+        var sgn = ((EN.wob | 0) % 2) ? 1 : -1;
+        moveCircle(EN.pos, -uz * sgn * EN.T.spd * dt * 0.9, ux * sgn * EN.T.spd * dt * 0.9, EN.T.r);
+      }
+    } else if (EN.cd <= 0) {
+      EN.cd = EN.T.atk;
+      if (EN.T.boom) { EN.hp = 0; killEnemy(EN, n); continue; }
+      hurtPlayer(EN.T.dmg);
+    }
+    EN.g.position.set(EN.pos.x, Math.abs(Math.sin(EN.wob)) * 0.16, EN.pos.z);
+    EN.g.rotation.y = Math.atan2(tx, tz);
+  }
+
+  /* --- pickups (auto-collect scrap/mesh) --- */
+  for (var pk = 0; pk < pickups.length; pk++) {
+    var K = pickups[pk];
+    if (K.taken || K.kind === 'bench') continue;
+    K.mesh.rotation.y += dt * 2.1;
+    K.mesh.position.y = 1.0 + Math.sin(performance.now() / 380 + pk) * 0.16;
+    if (K.kind === 'crystal') continue;
+    if (Math.hypot(player.pos.x - K.x, player.pos.z - K.z) < 1.8) {
+      K.taken = true; K.g.visible = false;
+      if (K.kind === 'mesh') S.mesh++; else S.scrap++;
+      SFX.pick();
+    }
+  }
+
+  /* --- crystal decay --- */
+  var res = CW.stepCrystals(S.crystals, dt, CFG.CELL_CAP);
+  if (res.shattered) { toast('VOIDGLASS DESTABILISED — ' + res.shattered + ' LOST'); noise(0.3, 0.2, 1400); }
+  S.crystals = res.crystals;
+  var newAlert = CW.alertFromHot(hotCount());
+  if (newAlert > S.alert) SFX.alertUp();
+  S.alert = newAlert;
+
+  /* --- O2 --- */
+  if (!S.keys.N1) {
+    S.o2 -= CFG.O2_DRAIN_PRE_N1 * dt;
+    if (S.o2 <= 0) { S.o2 = 0; hurtPlayer(11 * dt); }
+  } else if (S.o2 < CFG.O2_MAX) S.o2 = Math.min(CFG.O2_MAX, S.o2 + 7 * dt);
+
+  S.invuln -= dt;
+  S.room = roomAt(player.pos.x, player.pos.z) >= 0 ? roomAt(player.pos.x, player.pos.z) : S.room;
+
+  spawnTick(dt);
+  updateBoss(dt);
+  findFocus();
+  cullPVS();
+  updateCamera(dt);
+  updateHUD();
+}
+
+/* ================= BOSS UPDATE ================= */
+function updateBoss(dt) {
+  if (!boss || !bossMesh) return;
+  var inArena = S.room === ship.reactorRoom;
+  var wasState = boss.state;
+  CW.bossStep(boss, dt, {
+    playerInArena: inArena,
+    chargedHit: !!boss._charged,
+    dmg: boss._dmg || 0
+  });
+  boss._charged = false; boss._dmg = 0;
+
+  if (wasState === 'DORMANT' && boss.state === 'AGGRESSIVE') { SFX.boss(); toast('BROODMOTHER STIRS'); }
+  if (wasState !== 'VENT' && boss.state === 'VENT') SFX.vent();
+  if (boss.state === 'FLED' && wasState !== 'FLED') {
+    toast('ARENA ATMOSPHERE GONE — FALL BACK');
+    hurtPlayer(24);
+    var R = ship.rooms[ship.reactorRoom];
+    player.pos.x = R.cx; player.pos.z = R.cz + R.d / 2 + 5;
+    boss.state = 'DORMANT'; boss.arena = CFG.ARENA_TIMER; boss.t = 0;
+  }
+  if (boss.state === 'DEAD' && !S.part) {
+    S.part = true;
+    bossMesh.group.visible = false;
+    SFX.power(); toast('COOLANT REGULATOR RECOVERED');
+    for (var i = 0; i < 26; i++) burst(bossMesh.x + (Math.random() - .5) * 7, 2 + Math.random() * 3, bossMesh.z + (Math.random() - .5) * 7, 0xff8a4a);
+  }
+
+  /* visual state */
+  var venting = boss.state === 'VENT' || boss.state === 'STAGGER';
+  var pulse = 0.5 + Math.sin(performance.now() / 90) * 0.5;
+  for (var s = 0; s < bossMesh.sacs.length; s++) {
+    bossMesh.sacs[s].material.color.setHex(venting ? 0xffcc33 : 0x3a1a20);
+    bossMesh.sacs[s].scale.setScalar(venting ? 1 + pulse * 0.34 : 1);
+  }
+  bossMesh.light.color.setHex(venting ? 0xffcc33 : 0xff5a3c);
+  bossMesh.light.intensity = venting ? 2.4 + pulse : 1.6;
+  bossMesh.group.position.y = boss.state === 'STAGGER' ? -0.6 : Math.sin(performance.now() / 520) * 0.16;
+  bossMesh.group.rotation.y += dt * (boss.state === 'AGGRESSIVE' ? 0.55 : 0.14);
+
+  /* attacks */
+  if (!inArena || boss.state === 'DEAD' || boss.state === 'DORMANT') return;
+  boss._atk = (boss._atk || 0) - dt;
+  boss._add = (boss._add || 0) - dt;
+  if (boss.state === 'AGGRESSIVE' && boss._atk <= 0) {
+    boss._atk = 1.15;
+    var dx = player.pos.x - bossMesh.x, dz = player.pos.z - bossMesh.z, dl = Math.hypot(dx, dz) || 1;
+    for (var a = -1; a <= 1; a++) {
+      var ang = Math.atan2(dx / dl, dz / dl) + a * 0.22;
+      enemyShot(bossMesh.x, bossMesh.z, Math.sin(ang), Math.cos(ang), 12);
+    }
+    blip(120, 0.16, 'square', 0.12, 60);
+  }
+  if (boss.state === 'ARMORED' && boss._atk <= 0) {
+    boss._atk = 0.55;
+    for (var r = 0; r < 10; r++) {
+      var A = (r / 10) * Math.PI * 2;
+      enemyShot(bossMesh.x, bossMesh.z, Math.sin(A), Math.cos(A), 9);
+    }
+    noise(0.3, 0.18, 380);
+  }
+  if (boss._add <= 0) {
+    boss._add = 3.4;
+    var R2 = ship.rooms[ship.reactorRoom];
+    if (R2.vpos && R2.vpos.length && enemies.length < ENEMY_CAP - 3) {
+      var v = R2.vpos[Math.floor(Math.random() * R2.vpos.length)];
+      spawnEnemy('skitter', v.x, v.z);
+    }
+  }
+}
+
+/* ================= CAMERA + PVS ================= */
+function updateCamera(dt) {
+  S.shake = Math.max(0, S.shake - dt * 3.2);
+  var sx = (Math.random() - 0.5) * S.shake * 2.2, sz = (Math.random() - 0.5) * S.shake * 2.2;
+  var tx = player.pos.x + CAM_OFF.x, ty = CAM_OFF.y, tz = player.pos.z + CAM_OFF.z;
+  camera.position.x += (tx - camera.position.x) * Math.min(1, dt * 8) ;
+  camera.position.y += (ty - camera.position.y) * Math.min(1, dt * 8);
+  camera.position.z += (tz - camera.position.z) * Math.min(1, dt * 8);
+  camera.position.x += sx; camera.position.z += sz;
+  /* lookAt on the camera itself — cameras look down -Z natively, so this is correct */
+  camera.lookAt(player.pos.x, 1.4, player.pos.z);
+}
+function cullPVS() {
+  var vis = ship.pvs[S.room] || [];
+  var set = {};
+  for (var i = 0; i < vis.length; i++) set[vis[i]] = 1;
+  for (var r = 0; r < roomGroups.length; r++) roomGroups[r].visible = !!set[r];
+  if (bossGroup) bossGroup.visible = !!set[ship.reactorRoom] && boss && boss.state !== 'DEAD';
+  for (var d = 0; d < doors.length; d++) if (!doors[d].open) doors[d].mesh.visible = !!set[doors[d].room];
+}
+
+/* ================= HUD ================= */
+function updateHUD() {
+  $('hpF').style.width = (S.hp / CFG.PLAYER_HP * 100) + '%';
+  $('o2F').style.width = (S.o2 / CFG.O2_MAX * 100) + '%';
+  var hot = hotCount();
+  $('inv').innerHTML =
+    'SCRAP <b>' + S.scrap + '</b><br>' +
+    'MESH <b>' + S.mesh + '</b><br>' +
+    '<span class="cry">VOIDGLASS ' + S.crystals.length + '</span>' + (hot ? ' <span class="hot">(' + hot + ' HOT)</span>' : '') + '<br>' +
+    'CHARGES <b>' + S.charges + '/' + CFG.RIFLE_CAP + '</b>';
+  var bars = $('alertBars').children;
+  for (var i = 0; i < 3; i++) bars[i].classList.toggle('on', S.alert > i);
+  $('alert').style.color = S.alert >= 2 ? '#ff8a4a' : '#5f7f96';
+
+  var R = ship.rooms[S.room];
+  $('sector').textContent = R ? (CW.SECTORS[R.role] || CW.SECTORS.SPINE).name.toUpperCase() : '';
+  $('obj').textContent = objective();
+
+  if (boss && boss.state !== 'DORMANT' && boss.state !== 'DEAD' && S.room === ship.reactorRoom) {
+    $('boss').style.display = 'block';
+    $('bossF').style.width = (boss.armor / CFG.ARMOR_TIERS * 100) + '%';
+    var ab = $('armor').children;
+    for (var a = 0; a < 3; a++) ab[a].classList.toggle('on', boss.armor > a);
+    var st = $('bossState');
+    st.textContent = boss.state === 'VENT' ? '▼ VENTING — FIRE THE CHARGE RIFLE ▼'
+      : boss.state === 'ARMORED' ? 'CARAPACE SEALED'
+        : boss.state === 'STAGGER' ? 'STAGGERED' : 'HOSTILE';
+    st.classList.toggle('vent', boss.state === 'VENT');
+    $('arenaT').textContent = 'ARENA ATMOSPHERE ' + Math.max(0, boss.arena).toFixed(0) + 's';
+  } else $('boss').style.display = 'none';
+}
+function objective() {
+  if (!S.keys.N0) return 'REPAIR EMERGENCY LIGHTING — SCRAP ' + S.scrap + '/' + CFG.N0_SCRAP;
+  if (!S.keys.N1) return 'REPAIR ATMOSPHERE SCRUBBER IN HYDROPONICS — SCRAP ' + S.scrap + '/' + CFG.N1_SCRAP + ' · MESH ' + S.mesh + '/' + CFG.N1_MESH;
+  if (S.part) return 'INSTALL THE COOLANT REGULATOR AT THE REACTOR';
+  if (S.charges <= 0) return 'EXTRACT VOIDGLASS · CHARGE THE RIFLE AT THE CRYOBAY BENCH';
+  return 'KILL THE BROODMOTHER — CHARGE RIFLE ONLY, DURING THE VENT';
+}
+
+/* ================= LIFECYCLE ================= */
+function endGame(win, title, body) {
+  if (ended) return;
+  ended = true; running = false;
+  $('endTitle').textContent = win ? 'REACTOR ONLINE' : (title || 'LOST');
+  $('endSub').textContent = 'SHIP ' + ship.code;
+  $('endBody').textContent = win
+    ? 'Power tier 1 restored. The Coldwake has a heartbeat again — and eight more repair nodes between you and Earth. Slice complete.'
+    : (body || '');
+  $('endScreen').style.display = 'flex';
+}
+
+function startGame(code) {
+  ship = CW.generateShip(code);
+  var v = CW.verifyShip(ship);
+  if (!v.ok) { console.warn('UNSOLVABLE SHIP', v.fail); }
+
+  if (world) { scene.remove(world); }
+  enemies = []; projectiles = []; beams = []; particles = [];
+  S = {
+    hp: CFG.PLAYER_HP, o2: CFG.O2_MAX, scrap: 0, mesh: 0, crystals: [], charges: 0,
+    keys: {}, wep: 0, alert: 0, room: 0, invuln: 0, shake: 0, charging: 0, cool: 0,
+    spawnT: 2, part: false, powerT1: false
+  };
+  boss = null; bossMesh = null; bossGroup = null; ended = false;
+
+  scene = new THREE.Scene();
+  scene.fog = new THREE.Fog(0x05080c, 34, 96);
+  scene.add(new THREE.AmbientLight(0x33475a, 0.9));
+  var hemi = new THREE.HemisphereLight(0x486a86, 0x0d151d, 0.55); scene.add(hemi);
+
+  buildWorld();
+  buildPlayer(ship.rooms[0]);
+  camera.position.set(ship.rooms[0].cx, CAM_OFF.y, ship.rooms[0].cz + CAM_OFF.z);
+
+  setWep(0);
+  $('rifleAmt').textContent = '0';
+  $('title').style.display = 'none';
+  $('endScreen').style.display = 'none';
+  running = true;
+  toast('SHIP ' + ship.code + ' — CRYOBAY');
+}
+
+function loop() {
+  requestAnimationFrame(loop);
+  var dt = Math.min(0.05, clock.getDelta());
+  update(dt);
+  if (scene && camera) renderer.render(scene, camera);
+}
+
+function init() {
+  renderer = new THREE.WebGLRenderer({ canvas: $('cv'), antialias: window.devicePixelRatio < 2 });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  camera = new THREE.PerspectiveCamera(46, window.innerWidth / window.innerHeight, 0.5, 600);
+  clock = new THREE.Clock();
+  raycaster = new THREE.Raycaster();
+  groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -1.2);
+  gradMap = makeGradient();
+  scene = new THREE.Scene();
+
+  window.addEventListener('resize', function () {
+    camera.aspect = window.innerWidth / window.innerHeight;
+    camera.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
+  });
+
+  initInput();
+
+  var seedRnd = CW.rng((Date.now() ^ 0x9e3779b9) >>> 0);
+  $('codeIn').value = CW.makeCode(seedRnd);
+  $('btnStart').addEventListener('click', function () { audioInit(); startGame($('codeIn').value || 'CW-0001'); });
+  $('btnRand').addEventListener('click', function () {
+    var r = CW.rng((Date.now() * 2654435761 ^ Math.floor(Math.random() * 1e9)) >>> 0);
+    $('codeIn').value = CW.makeCode(r); audioInit(); startGame($('codeIn').value);
+  });
+  $('btnAgain').addEventListener('click', function () {
+    var r = CW.rng((Date.now() * 40503 ^ Math.floor(Math.random() * 1e9)) >>> 0);
+    startGame(CW.makeCode(r));
+  });
+  $('btnSame').addEventListener('click', function () { startGame(ship.code); });
+
+  $('loading').style.display = 'none';
+  loop();
+}
+
+/* headless test hook — harmless in the browser */
+window.__CW = {
+  get player() { return player; }, get S() { return S; }, get boss() { return boss; },
+  get ship() { return ship; }, get enemies() { return enemies; }, get colliders() { return colliders; },
+  get pickups() { return pickups; }, get nodes() { return nodeObjs; }, get ended() { return ended; },
+  hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, PLR_R: PLR_R,
+  start: function (c) { startGame(c); }, hurt: function (d) { hurtPlayer(d); },
+  give: function (k, n) { S[k] = n; }, setKey: function (k) { S.keys[k] = true; openDoors(); }
+};
+
+if (typeof THREE === 'undefined') {
+  $('loading').textContent = 'THREE.JS FAILED TO LOAD — CHECK NETWORK';
+} else init();
+})();
+
+</script>
+</body>
+</html>
