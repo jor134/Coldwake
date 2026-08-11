@@ -46,7 +46,7 @@ THREE.AmbientLight = mk('AmbientLight', function (c, i) { this.color = new Col(c
 THREE.HemisphereLight = mk('HemisphereLight', function (a, b, i) { this.intensity = i; });
 
 ['BoxGeometry', 'SphereGeometry', 'CylinderGeometry', 'ConeGeometry', 'IcosahedronGeometry',
- 'OctahedronGeometry', 'TorusGeometry', 'RingGeometry', 'PlaneGeometry'].forEach(function (n) {
+ 'OctahedronGeometry', 'TorusGeometry', 'RingGeometry', 'PlaneGeometry', 'CircleGeometry'].forEach(function (n) {
   THREE[n] = function () {
     for (var i = 0; i < arguments.length; i++) {
       if (typeof arguments[i] === 'number' && !isFinite(arguments[i])) throw new Error(n + ': non-finite arg ' + i);
@@ -344,22 +344,22 @@ var D = global.window.__CW;
 t('R17 debug hook is exposed', function () { return !!(D && D.player) || 'no hook'; });
 
 function inPlayableSpace(x, z) {
-  var s = D.ship, DOOR_W = 7;
-  for (var i = 0; i < s.rooms.length; i++) {
-    var R = s.rooms[i];
-    if (Math.abs(x - R.cx) <= R.w / 2 + 0.6 && Math.abs(z - R.cz) <= R.d / 2 + 0.6) return true;
+  var sp = D.ship, DOOR_W = 7;
+  for (var i = 0; i < sp.rooms.length; i++) {
+    var R = sp.rooms[i];
+    if (Math.hypot(x - R.cx, z - R.cz) <= R.rad + 0.8) return true;
   }
-  for (var a = 0; a < s.rooms.length; a++) {
-    var A = s.rooms[a];
+  for (var a = 0; a < sp.rooms.length; a++) {
+    var A = sp.rooms[a];
     for (var l = 0; l < A.links.length; l++) {
-      var B = s.rooms[A.links[l].to];
-      var dx = B.gx - A.gx, dz = B.gy - A.gy;
+      var B = sp.rooms[A.links[l].to];
+      var dx = B.gx - A.gx;
       if (dx !== 0) {
         var lo = Math.min(A.cx, B.cx), hi = Math.max(A.cx, B.cx);
-        if (x >= lo && x <= hi && Math.abs(z - A.cz) <= DOOR_W / 2 + 0.6) return true;
+        if (x >= lo && x <= hi && Math.abs(z - A.cz) <= DOOR_W / 2 + 0.8) return true;
       } else {
         var lo2 = Math.min(A.cz, B.cz), hi2 = Math.max(A.cz, B.cz);
-        if (z >= lo2 && z <= hi2 && Math.abs(x - A.cx) <= DOOR_W / 2 + 0.6) return true;
+        if (z >= lo2 && z <= hi2 && Math.abs(x - A.cx) <= DOOR_W / 2 + 0.8) return true;
       }
     }
   }
@@ -427,11 +427,19 @@ t('R21 player never escapes into the void (10000 frames)', function () {
 t('R22 teleport into solid geometry is resolved out, not through', function () {
   D.start('PUSH-07'); pump(3);
   var cols = D.colliders, fixed = 0, stuck = 0;
-  for (var i = 0; i < Math.min(cols.length, 260); i++) {
+  for (var i = 0; i < Math.min(cols.length, 320); i++) {
     var c = cols[i];
     if (!c.active) continue;
-    var p = { x: (c.x0 + c.x1) / 2, z: (c.z0 + c.z1) / 2 };
+    var p;
+    if (c.type === 'ring') {
+      /* start exactly on the hull shell, which is the worst case for ejection */
+      var ang = (i * 0.7) % (Math.PI * 2);
+      p = { x: c.cx + Math.sin(ang) * c.R, z: c.cz + Math.cos(ang) * c.R };
+    } else {
+      p = { x: (c.x0 + c.x1) / 2, z: (c.z0 + c.z1) / 2 };
+    }
     D.resolve(p, D.PLR_R);
+    if (!isFinite(p.x) || !isFinite(p.z)) { stuck++; continue; }
     if (D.hitsWall(p.x, p.z, D.PLR_R * 0.9)) stuck++; else fixed++;
   }
   return stuck === 0 || stuck + ' of ' + (stuck + fixed) + ' ejections left the circle still overlapping';
@@ -457,10 +465,10 @@ t('R24 locked doors block movement until the key is repaired', function () {
     var sh = D.ship;
     /* the reactor is gated behind N1 — try to walk straight in from outside */
     var R = sh.rooms[sh.reactorRoom];
-    var p = { x: R.cx, z: R.cz + R.d / 2 + 12 };
+    var p = { x: R.cx + 3.5, z: R.cz + R.rad + 12 };
     total++;
-    D.moveCircle(p, 0, -(R.d / 2 + 24), D.PLR_R);   /* charge at the arena */
-    var inside = Math.abs(p.x - R.cx) < R.w / 2 - 1 && Math.abs(p.z - R.cz) < R.d / 2 - 1;
+    D.moveCircle(p, 0, -(R.rad + 24), D.PLR_R);   /* charge at the arena off-axis, so the doorway is not in line */
+    var inside = Math.hypot(p.x - R.cx, p.z - R.cz) < R.rad - 1.5;
     if (!inside) blocked++;
   }
   return blocked === total || (total - blocked) + '/' + total + ' ships let the player walk into the gated arena';
@@ -597,7 +605,8 @@ function pointInSolid(x, y, z) {
   for (var i = 0; i < cols.length; i++) {
     var c = cols[i];
     if (!c.active) continue;
-    if (x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1 && y > 0 && y < c.h) return c;
+    var y0 = (c.y0 === undefined) ? 0 : c.y0;
+    if (x > c.x0 && x < c.x1 && z > c.z0 && z < c.z1 && y > y0 && y < c.h) return c;
   }
   return null;
 }
@@ -743,6 +752,18 @@ t('R38 pitch stays clamped under extreme input', function () {
   return true;
 });
 
+t('R38b circular hulls fit inside their grid cell', function () {
+  for (var s2 = 0; s2 < 12; s2++) {
+    resetInput(); D.start('RAD' + s2); pump(4);
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var R = D.ship.rooms[r];
+      if (!(R.rad > 3)) return 'room ' + r + ' radius ' + R.rad;
+      if (R.rad * 2 >= global.CW.CFG.CELL) return 'room diameter ' + (R.rad * 2) + ' >= cell ' + global.CW.CFG.CELL;
+    }
+  }
+  return true;
+});
+
 t('R39 greeble batching keeps per-room object counts bounded', function () {
   resetInput();
   var worstRoom = 0, worstShip = 0, worstCode = '';
@@ -779,9 +800,9 @@ function clearSpot() {
     var r = D.ship.rooms[i];
     if (!best || r.w * r.d > best.w * best.d) best = r;
   }
-  for (var a = 0; a < 600; a++) {
-    var tx = best.cx + (Math.random() - 0.5) * (best.w - 6);
-    var tz = best.cz + (Math.random() - 0.5) * (best.d - 6);
+  for (var a = 0; a < 900; a++) {
+    var ang = Math.random() * Math.PI * 2, rr = Math.sqrt(Math.random()) * (best.rad - 4);
+    var tx = best.cx + Math.sin(ang) * rr, tz = best.cz + Math.cos(ang) * rr;
     if (!D.hitsWall(tx, tz, 3.2)) return { x: tx, z: tz };
   }
   return { x: best.cx, z: best.cz };
@@ -908,18 +929,25 @@ t('R51 walking away during the wind-up cancels the hit', function () {
   resetInput(); D.start('TELE-02'); pump(4); resetInput();
   D.setKey('N0'); D.setKey('N1');
   var spot2 = clearSpot();
-  D.player.pos.x = spot2.x; D.player.pos.z = spot2.z;
   var escapes = 0, tries = 0;
-  for (var f = 0; f < 3000 && tries < 12; f++) {
+  for (var f = 0; f < 4000 && tries < 12; f++) {
+    D.player.pos.x = spot2.x; D.player.pos.z = spot2.z;
     D.give('hp', 100); D.give('invuln', 0);
     pump(1);
     for (var e = 0; e < D.enemies.length; e++) {
       var EN = D.enemies[e];
       if (EN.wind > 0.3) {
-        tries++;
         /* teleport well clear mid-telegraph */
         D.player.pos.x += 22; D.player.pos.z += 22;
         D.resolve(D.player.pos, D.PLR_R);
+        /* only a valid trial if NO other enemy is now in reach — otherwise we would
+           be measuring a different alien's bite, not the cancelled one */
+        var nearest = 1e9;
+        for (var q = 0; q < D.enemies.length; q++) {
+          nearest = Math.min(nearest, Math.hypot(D.enemies[q].pos.x - D.player.pos.x, D.enemies[q].pos.z - D.player.pos.z));
+        }
+        if (nearest < 14) break;
+        tries++;
         var hp0 = D.S.hp;
         pump(20);
         if (D.S.hp >= hp0) escapes++;
@@ -947,8 +975,11 @@ t('R52 tutorial advances through every step and completes', function () {
   if (!TG) return 'no practice canister spawned';
   var guard = 0;
   while (!TG.dead && guard++ < 400) {
-    D.player.pos.x = TG.x; D.player.pos.z = TG.z + 5;
-    D.S.yaw = 0; D.S.pitch = 0;
+  var TGr = D.ship.rooms[0];
+  var ax = TGr.cx + (TG.x - TGr.cx) * 0.35, az = TGr.cz + (TG.z - TGr.cz) * 0.35;
+  D.player.pos.x = ax; D.player.pos.z = az;
+  D.S.yaw = Math.atan2(TG.x - ax, TG.z - az) + Math.PI;
+  D.S.pitch = 0;
     getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
     pump(4);
   }
@@ -974,8 +1005,11 @@ t('R53 shooting the canister does not throw or damage the player', function () {
   var TG = D.targets[0];
   var hp0 = D.S.hp;
   for (var i = 0; i < 200; i++) {
-    D.player.pos.x = TG.x; D.player.pos.z = TG.z + 4;
-    D.S.yaw = 0;
+  var TGr = D.ship.rooms[0];
+  var ax = TGr.cx + (TG.x - TGr.cx) * 0.35, az = TGr.cz + (TG.z - TGr.cz) * 0.35;
+  D.player.pos.x = ax; D.player.pos.z = az;
+  D.S.yaw = Math.atan2(TG.x - ax, TG.z - az) + Math.PI;
+  D.S.pitch = 0;
     getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
     pump(3);
   }
@@ -1014,8 +1048,11 @@ t('R56 the firing path is actually live (guards against vacuous combat tests)', 
   resetInput(); D.start('LIVE-01'); pump(4); resetInput();
   var TG = D.targets[0];
   if (!TG) return 'no canister to shoot';
-  D.player.pos.x = TG.x; D.player.pos.z = TG.z + 5;
-  D.S.yaw = 0; D.S.pitch = 0;
+  var TGr = D.ship.rooms[0];
+  var ax = TGr.cx + (TG.x - TGr.cx) * 0.35, az = TGr.cz + (TG.z - TGr.cz) * 0.35;
+  D.player.pos.x = ax; D.player.pos.z = az;
+  D.S.yaw = Math.atan2(TG.x - ax, TG.z - az) + Math.PI;
+  D.S.pitch = 0;
   var hp0 = TG.hp;
   getEl('cv').fire('mousedown', { button: 0, preventDefault: function () {} });
   pump(3);
@@ -1023,6 +1060,100 @@ t('R56 the firing path is actually live (guards against vacuous combat tests)', 
   pump(20);
   global.window.fire('mouseup', { button: 0 });
   return TG.hp < hp0 || 'canister took no damage — shots are not being fired at all';
+});
+
+
+/* ---------- BUILD 04: CURVED HULL INTEGRITY ---------- */
+t('R57 hull is sealed - player cannot escape a circular room except through a doorway', function () {
+  resetInput(); D.start('HULL-01'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var leaks = 0, first = null;
+  for (var trial = 0; trial < 4000; trial++) {
+    var R = D.ship.rooms[trial % D.ship.rooms.length];
+    var a = Math.random() * Math.PI * 2;
+    var p = { x: R.cx + Math.sin(a) * (R.rad - 2.5), z: R.cz + Math.cos(a) * (R.rad - 2.5) };
+    if (D.hitsWall(p.x, p.z, D.PLR_R)) continue;
+    /* drive hard at the hull from inside */
+    D.moveCircle(p, Math.sin(a) * 60, Math.cos(a) * 60, D.PLR_R);
+    if (!inPlayableSpace(p.x, p.z)) { leaks++; if (!first) first = p.x.toFixed(1) + ',' + p.z.toFixed(1); }
+  }
+  return leaks === 0 || leaks + ' hull leaks, first at ' + first;
+});
+
+t('R58 room-to-corridor junctions do not leak', function () {
+  resetInput(); D.start('HULL-02'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var leaks = 0;
+  for (var i = 0; i < D.ship.rooms.length; i++) {
+    var R = D.ship.rooms[i];
+    for (var l = 0; l < R.links.length; l++) {
+      var B = D.ship.rooms[R.links[l].to];
+      var dx = B.gx - R.gx, dz = B.gy - R.gy;
+      /* walk the full width of the doorway, at an angle, repeatedly */
+      for (var w = -4; w <= 4; w++) {
+        for (var k = 0; k < 6; k++) {
+          var p = { x: R.cx + dx * (R.rad - 2), z: R.cz + dz * (R.rad - 2) };
+          if (dx !== 0) p.z += w * 0.9; else p.x += w * 0.9;
+          if (D.hitsWall(p.x, p.z, D.PLR_R)) continue;
+          var ax = dx * 30 + (dz !== 0 ? (k - 3) * 9 : 0);
+          var az = dz * 30 + (dx !== 0 ? (k - 3) * 9 : 0);
+          D.moveCircle(p, ax, az, D.PLR_R);
+          if (!inPlayableSpace(p.x, p.z)) leaks++;
+        }
+      }
+    }
+  }
+  return leaks === 0 || leaks + ' junction leaks';
+});
+
+t('R59 hitscan cannot shoot through the hull', function () {
+  resetInput(); D.start('HULL-03'); pump(4); resetInput();
+  var R = D.ship.rooms[0], escaped = 0;
+  for (var i = 0; i < 3000; i++) {
+    var a = Math.random() * Math.PI * 2;
+    var ox = R.cx + Math.sin(a) * (R.rad * 0.3), oz = R.cz + Math.cos(a) * (R.rad * 0.3);
+    if (D.hitsWall(ox, oz, 1.0)) continue;
+    var sa = Math.random() * Math.PI * 2, pit = (Math.random() - 0.5) * 0.5;
+    var dx = Math.sin(sa) * Math.cos(pit), dy = Math.sin(pit), dz = Math.cos(sa) * Math.cos(pit);
+    var t = D.rayWorld(ox, 1.7, oz, dx, dy, dz, 70);
+    var ex = ox + dx * t, ez = oz + dz * t;
+    /* the shot must stop inside the ship, not sail off into space */
+    if (t >= 70 && !inPlayableSpace(ex, ez)) escaped++;
+  }
+  return escaped === 0 || escaped + '/3000 shots passed through the hull into space';
+});
+
+t('R60 third-person camera stays inside the hull on curved geometry', function () {
+  resetInput(); D.start('HULL-04'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.setView(false);
+  var bad = 0, codes = ['KeyW', 'KeyA', 'KeyS', 'KeyD'];
+  for (var f = 0; f < 6000; f++) {
+    if (f % 5 === 0) global.window.fire(Math.random() < 0.5 ? 'keydown' : 'keyup', { code: codes[Math.floor(Math.random() * 4)], preventDefault: function () {} });
+    if (f % 3 === 0) { D.S.yaw += (Math.random() - 0.5) * 0.8; D.S.pitch = Math.max(-1.4, Math.min(1.4, D.S.pitch + (Math.random() - 0.5) * 0.6)); }
+    pump(1);
+    var c = D.camera.position;
+    if (!inPlayableSpace(c.x, c.z)) bad++;
+  }
+  resetInput(); D.setView(true);
+  return bad === 0 || bad + '/6000 frames put the camera outside the hull';
+});
+
+t('R61 every room has an unobstructed doorway gap in its hull', function () {
+  for (var s2 = 0; s2 < 10; s2++) {
+    resetInput(); D.start('GAP' + s2); pump(4);
+    for (var i = 0; i < D.ship.rooms.length; i++) {
+      var R = D.ship.rooms[i];
+      for (var l = 0; l < R.links.length; l++) {
+        var B = D.ship.rooms[R.links[l].to];
+        var dx = B.gx - R.gx, dz = B.gy - R.gy;
+        var px = R.cx + dx * R.rad, pz = R.cz + dz * R.rad;
+        /* dead centre of the doorway must be walkable (ignoring closed blast doors) */
+        var h = D.hitsWall(px, pz, 0.5);
+        if (h && h.type === 'ring') return 'hull has no gap toward neighbour on ship ' + s2 + ' room ' + i;
+      }
+    }
+  }
+  return true;
 });
 
 console.log('\n' + log.join('\n'));
