@@ -256,7 +256,9 @@ global.document = {
 /* HUD elements that the code indexes into */
 var alertBars = getEl('alertBars'); alertBars.children = [new El('b0'), new El('b1'), new El('b2')];
 var armor = getEl('armor'); armor.children = [new El('a0'), new El('a1'), new El('a2')];
-['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','fieldBtn','viewBtn','muteBtn','vrBtn','lookZone','stickL','field','fieldBar','fieldF','fieldT'].forEach(getEl);
+['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','fieldBtn','viewBtn','muteBtn','vrBtn','lookZone','stickL','field','fieldBar','fieldF','fieldT','intro','introShip','introTitle','introOrders','introSkip','revive','reviveBar','reviveF','reviveT','coop','coopIn','coopOut','coopStatus','btnCoop','btnCoopHost','btnCoopJoin','btnCoopAccept'].forEach(getEl);
+var introBody = getEl('introBody');
+introBody.children = [new El('ip0'), new El('ip1'), new El('ip2')];
 
 /* ---------- Web Audio stub ----------
    Records every node and connection so the tests exercise the real synthesis
@@ -339,12 +341,62 @@ var NAV = {
     }
   }
 };
+/* WebRTC stub: enough of the API for the handshake state machine to run */
+function FakeChannel(name) {
+  this.label = name; this.readyState = 'connecting';
+  this.sent = [];
+  this.onopen = null; this.onclose = null; this.onmessage = null;
+  var self = this;
+  this.send = function (d) {
+    if (self.readyState !== 'open') throw new Error('send on a closed channel');
+    self.sent.push(d);
+    if (self.peer && self.peer.onmessage) self.peer.onmessage({ data: d });
+  };
+  this.close = function () { self.readyState = 'closed'; if (self.onclose) self.onclose(); };
+  this._open = function () { self.readyState = 'open'; if (self.onopen) self.onopen(); };
+}
+global.FakeChannel = FakeChannel;
+function SyncP(v) { this.v = v; }
+SyncP.prototype.then = function (f) {
+  var out;
+  try { out = f ? f(this.v) : this.v; } catch (e) { return { then: function () { return this; }, catch: function (g) { g(e); return this; } }; }
+  return (out && typeof out.then === 'function') ? out : new SyncP(out);
+};
+SyncP.prototype.catch = function () { return this; };
+global.RTCPeerConnection = function (cfg) {
+  var self = this;
+  this.cfg = cfg;
+  this.iceGatheringState = 'complete';
+  this.localDescription = null; this.remoteDescription = null;
+  this.ondatachannel = null;
+  this._lis = {};
+  this.addEventListener = function (t, f) { (self._lis[t] = self._lis[t] || []).push(f); };
+  this.createDataChannel = function (n, o) { self._ch = new FakeChannel(n); return self._ch; };
+  this.createOffer = function () { return new SyncP({ type: 'offer', sdp: 'v=0 fake-offer' }); };
+  this.createAnswer = function () { return new SyncP({ type: 'answer', sdp: 'v=0 fake-answer' }); };
+  this.setLocalDescription = function (d) { self.localDescription = d; return new SyncP(); };
+  this.setRemoteDescription = function (d) {
+    self.remoteDescription = d;
+    if (d.type === 'offer') {
+      /* the joiner receives a channel from the offerer */
+      setTimeout(function () {
+        var ch = new FakeChannel('cw');
+        if (self.ondatachannel) self.ondatachannel({ channel: ch });
+      }, 0);
+    }
+    return new SyncP();
+  };
+  this.close = function () {};
+};
+
 try { Object.defineProperty(global, 'navigator', { value: NAV, writable: true, configurable: true }); }
 catch (e) { global.navigator = NAV; }
 if (!global.navigator || !global.navigator.xr) throw new Error('navigator stub failed to install');
 global.performance = { now: function () { return Date.now(); } };
 global.requestAnimationFrame = function (f) { rafQ.push(f); return rafQ.length; };
 global.setTimeout = function (f) { try { if (typeof f === 'function') f(); } catch (e) { throw e; } return 0; };
+/* drain microtasks so handshake promises settle inside the synchronous test loop */
+global.drain = function () { for (var i = 0; i < 40; i++) { try { require('timers'); } catch (e) {} } };
 global.clearTimeout = function () {};
 global.THREE = THREE;
 
@@ -356,6 +408,7 @@ function t(n, fn) {
 }
 
 var TARGET = process.argv.indexOf('--file') > -1 ? process.argv[process.argv.indexOf('--file') + 1] : null;
+var HTML = fs.readFileSync(TARGET || (__dirname + '/part1.html'), 'utf8');
 var coreSrc, gameSrc;
 if (TARGET) {
   var html = fs.readFileSync(TARGET, 'utf8');
@@ -681,6 +734,7 @@ function goTo(x, z, frames) {
 function interact() { global.window.fire('keydown', { code: 'KeyE', preventDefault: function () {} }); pump(2); }
 
 function resetInput() {
+  if (D && D.endIntro) D.endIntro();   /* skip the briefing unless a test is about it */
   ['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].forEach(function (c) {
     global.window.fire('keyup', { code: c, preventDefault: function () {} });
   });
@@ -1219,6 +1273,7 @@ t('R55 enemies can reach a player standing on open floor', function () {
 
 t('R56 the firing path is actually live (guards against vacuous combat tests)', function () {
   resetInput(); D.start('LIVE-01'); pump(4); resetInput();
+  D.endIntro();
   var TG = D.targets[0];
   if (!TG) return 'no canister to shoot';
   var TGr = D.ship.rooms[0];
@@ -2424,6 +2479,427 @@ t('R123 boss is beatable using only field charging, never visiting the bench', f
   }
   console.log('         [rifle] boss beaten from raw crystals in ' + wins + '/' + tries + ' attempts');
   return wins >= 2 || 'only ' + wins + '/' + tries + ' — field charging is not a viable route';
+});
+
+
+/* ---------- BUILD 12: HUD INPUT REACHABILITY ----------
+   The harness has no layout engine, so overlap bugs are invisible to it. These
+   are static checks on the real markup instead. The bug they exist to catch:
+   a full-screen touch catcher painted over the weapon buttons and swallowed
+   every tap, because the buttons had no z-index. */
+function cssRule(sel) {
+  var esc = sel.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  var m = HTML.match(new RegExp(esc + '\\{([^}]*)\\}'));
+  return m ? m[1] : null;
+}
+function zOf(sel) {
+  var body = cssRule(sel);
+  if (!body) return null;
+  var m = body.match(/z-index:(-?\d+)/);
+  return m ? parseInt(m[1], 10) : 0;   /* auto behaves as 0 among positioned siblings */
+}
+function domIndex(id) { return HTML.indexOf('id="' + id + '"'); }
+
+t('R124 the full-screen look zone has a defined stacking position', function () {
+  var z = zOf('#lookZone');
+  if (z === null) return 'no lookZone rule found';
+  var body = cssRule('#lookZone');
+  if (body.indexOf('inset:0') < 0) return 'the look zone is no longer full-screen — revisit these tests';
+  return true;
+});
+
+t('R125 every interactive HUD control sits above the look zone', function () {
+  var lookZ = zOf('#lookZone'), lookAt = domIndex('lookZone');
+  var controls = ['#weps', '.wep', '#act', '#fireBtn', '#fieldBtn', '#viewBtn', '#muteBtn', '#vrBtn', '.stick'];
+  var bad = [];
+  for (var i = 0; i < controls.length; i++) {
+    var sel = controls[i], body = cssRule(sel);
+    if (!body) { bad.push(sel + ' (no rule)'); continue; }
+    if (body.indexOf('pointer-events:auto') < 0 && sel !== '#weps') continue;
+    var z = zOf(sel);
+    /* a control only needs a z-index if the look zone paints over it, which it
+       does for anything earlier in the DOM */
+    var id = sel.replace(/^[#.]/, '');
+    var earlier = domIndex(id) >= 0 && domIndex(id) < lookAt;
+    if (z <= lookZ && earlier) bad.push(sel + ' z=' + z + ' vs lookZone z=' + lookZ);
+  }
+  return bad.length === 0 || 'controls buried under the touch catcher: ' + bad.join(', ');
+});
+
+t('R126 the weapon buttons specifically are reachable on touch', function () {
+  var z = zOf('#weps'), lookZ = zOf('#lookZone');
+  if (z === null) return 'no #weps rule';
+  if (z <= lookZ) return '#weps z=' + z + ' is not above the look zone z=' + lookZ;
+  if (domIndex('weps') > domIndex('lookZone') === false && z <= lookZ) return 'weapon buttons are swallowed';
+  var wep = cssRule('.wep');
+  return (wep && wep.indexOf('pointer-events:auto') >= 0) || '.wep is not clickable';
+});
+
+t('R127 weapon buttons have a usable tap target on touch', function () {
+  var m = HTML.match(/body\.touch \.wep\{([^}]*)\}/);
+  if (!m) return 'no touch-specific sizing for the weapon buttons';
+  var w = m[1].match(/min-width:(\d+)px/);
+  var p = m[1].match(/padding:(\d+)px/);
+  if (!w || parseInt(w[1], 10) < 64) return 'tap target only ' + (w ? w[1] : '?') + 'px wide';
+  return (p && parseInt(p[1], 10) >= 10) || 'vertical padding too small for a thumb';
+});
+
+t('R128 tapping each weapon button selects that weapon', function () {
+  resetInput(); D.start('TAP-01'); pump(4); resetInput();
+  var ws = global.document.querySelectorAll('.wep');
+  if (ws.length !== 3) return 'expected 3 weapon buttons, found ' + ws.length;
+  /* torch must work with no resources at all */
+  ws[1].fire('pointerdown', { preventDefault: function () {}, stopPropagation: function () {} });
+  pump(2);
+  if (D.S.wep !== 1) return 'tapping the torch did not select it (wep ' + D.S.wep + ')';
+  /* rifle must be selectable even empty */
+  ws[2].fire('pointerdown', { preventDefault: function () {}, stopPropagation: function () {} });
+  pump(2);
+  if (D.S.wep !== 2) return 'tapping the rifle did not select it (wep ' + D.S.wep + ')';
+  ws[0].fire('pointerdown', { preventDefault: function () {}, stopPropagation: function () {} });
+  pump(2);
+  return D.S.wep === 0 || 'tapping the sidearm did not select it';
+});
+
+t('R129 tapping the rifle after charging lets it actually fire', function () {
+  resetInput(); D.start('TAP-02'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  D.S.crystals.push({ t: 0 });
+  D.setField(true);
+  for (var f = 0; f < 400 && D.S.charges === 0; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  D.setField(false);
+  if (D.S.charges < 1) return 'field charging never produced a round';
+  var ws = global.document.querySelectorAll('.wep');
+  ws[2].fire('pointerdown', { preventDefault: function () {}, stopPropagation: function () {} });
+  pump(2);
+  if (D.S.wep !== 2) return 'could not select the charged rifle by tap';
+  /* hold the fire button, then release to discharge */
+  getEl('fireBtn').fire('pointerdown', { preventDefault: function () {} });
+  pump(60);
+  getEl('fireBtn').fire('pointerup', { preventDefault: function () {} });
+  pump(3);
+  return D.S.charges === 0 || 'the rifle did not fire on release (charges ' + D.S.charges + ')';
+});
+
+t('R130 a look drag that starts on a control does not steal the tap', function () {
+  resetInput(); D.start('TAP-03'); pump(4); resetInput();
+  var before = D.S.yaw;
+  /* pointerdown on the look zone whose target is a button must be ignored */
+  getEl('lookZone').fire('pointerdown', {
+    preventDefault: function () {}, pointerId: 9, clientX: 100, clientY: 100,
+    target: getEl('fireBtn')
+  });
+  getEl('lookZone').fire('pointermove', {
+    preventDefault: function () {}, pointerId: 9, clientX: 300, clientY: 100
+  });
+  pump(2);
+  return Math.abs(D.S.yaw - before) < 1e-9 || 'a tap on a control was treated as a look drag';
+});
+
+
+/* ---------- BUILD 13: OPENING BRIEFING ---------- */
+t('R131 the briefing appears on boarding and carries the premise', function () {
+  D.start('INTRO-1'); pump(4);
+  if (!D.intro.on) return 'the briefing never opened';
+  if (getEl('intro').style.display !== 'flex') return 'the briefing panel is not visible';
+  /* the code shown is the normalised one, not the raw input */
+  if (getEl('introShip').textContent.indexOf(D.ship.code) < 0) {
+    return 'the briefing shows "' + getEl('introShip').textContent + '" but the ship is ' + D.ship.code;
+  }
+  /* the premise text must be the one from the design doc, not a paraphrase */
+  var body = HTML.slice(HTML.indexOf('id="introBody"'), HTML.indexOf('id="introOrders"'));
+  var beats = ['failed cryopod', 'crew is gone', 'nesting in the ship',
+               'three hive matriarchs', 'charge rifle', 'Voidglass', 'three decks away'];
+  var missing = beats.filter(function (b) { return body.indexOf(b) < 0; });
+  if (missing.length) return 'premise is missing: ' + missing.join(', ');
+  var orders = HTML.slice(HTML.indexOf('id="introOrders"'), HTML.indexOf('id="introSkip"'));
+  var ord = ['RESTORE THE REACTOR', 'RESTORE THE DRIVE', 'RESTORE NAVIGATION', 'BURN FOR EARTH'];
+  var mo = ord.filter(function (o) { return orders.indexOf(o) < 0; });
+  D.endIntro();
+  return mo.length === 0 || 'orders missing: ' + mo.join(', ');
+});
+
+t('R132 the briefing reveals its lines in sequence', function () {
+  D.start('INTRO-2'); pump(4);
+  var ps = getEl('introBody').children;
+  var lit0 = 0;
+  for (var i = 0; i < ps.length; i++) if (ps[i].classList.contains('on')) lit0++;
+  if (lit0 > 1) return 'lines appeared all at once';
+  for (var f = 0; f < 700; f++) pump(1);
+  var lit = 0;
+  for (var j = 0; j < ps.length; j++) if (ps[j].classList.contains('on')) lit++;
+  if (lit !== ps.length) return 'only ' + lit + '/' + ps.length + ' lines revealed';
+  if (!getEl('introOrders').classList.contains('on')) return 'the orders never appeared';
+  D.endIntro();
+  return true;
+});
+
+t('R133 any input dismisses the briefing', function () {
+  D.start('INTRO-3'); pump(4);
+  if (!D.intro.on) return 'no briefing to dismiss';
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  pump(2);
+  if (D.intro.on) return 'a keypress did not dismiss the briefing';
+  global.window.fire('keyup', { code: 'KeyW', preventDefault: function () {} });
+
+  D.start('INTRO-4'); pump(4);
+  getEl('intro').fire('pointerdown', { preventDefault: function () {} });
+  pump(2);
+  if (D.intro.on) return 'a tap did not dismiss the briefing';
+  return getEl('intro').style.display === 'none' || 'the panel is still displayed';
+});
+
+t('R134 the briefing always ends on its own', function () {
+  D.start('INTRO-5'); pump(4);
+  for (var f = 0; f < 900; f++) pump(1);   /* 30s of no input at all */
+  if (D.intro.on) return 'the briefing never timed out';
+  return getEl('intro').style.display === 'none' || 'the panel stayed up after timing out';
+});
+
+t('R135 the briefing does not block the game or the tutorial afterwards', function () {
+  resetInput(); D.start('INTRO-6'); pump(4);
+  /* the ship keeps running underneath */
+  var p0 = { x: D.player.pos.x, z: D.player.pos.z };
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  for (var f = 0; f < 90; f++) pump(1);
+  global.window.fire('keyup', { code: 'KeyW', preventDefault: function () {} });
+  var moved = Math.hypot(D.player.pos.x - p0.x, D.player.pos.z - p0.z);
+  if (moved < 1) return 'the player could not move after the briefing';
+  return D.tutStep >= 1 || 'the tutorial did not resume (step ' + D.tutStep + ')';
+});
+
+t('R136 nothing can hurt you while the briefing is up', function () {
+  D.start('INTRO-7'); pump(4);
+  var spawned = 0;
+  for (var f = 0; f < 600; f++) {
+    pump(1);
+    spawned = Math.max(spawned, D.enemies.length);
+    if (D.S.hp < 100) return 'took damage during the briefing';
+  }
+  D.endIntro();
+  return spawned === 0 || spawned + ' enemies spawned during the briefing';
+});
+
+t('R137 slice still completable with the briefing in place', function () {
+  var fails = [];
+  for (var i = 0; i < 5; i++) {
+    var r = playthrough('INRUN' + i);
+    if (r !== true) fails.push('INRUN' + i + ': ' + r);
+  }
+  return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
+});
+
+
+/* ---------- BUILD 14: CO-OP ---------- */
+function loopback() {
+  /* wire two fake channels together and put the game in host mode */
+  var a = new FakeChannel('cw'), b = new FakeChannel('cw');
+  a.peer = b; b.peer = a;
+  a.readyState = 'open'; b.readyState = 'open';
+  return { a: a, b: b };
+}
+
+t('R138 co-op starts disabled and the game runs solo', function () {
+  resetInput(); D.start('COOP-01'); pump(6);
+  if (D.net.mode !== 'solo') return 'net mode is ' + D.net.mode + ' before any invite';
+  for (var f = 0; f < 200; f++) pump(1);
+  return true;
+});
+
+t('R139 hosting produces a pasteable invite code', function () {
+  resetInput(); D.start('COOP-02'); pump(4);
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  for (var i = 0; i < 40; i++) pump(1);
+  var code = getEl('coopOut').value;
+  if (!code) return 'no invite code was produced';
+  var sig = global.CW.unpackSignal(code);
+  if (!sig || sig.error) return 'the invite code does not parse: ' + JSON.stringify(sig);
+  if (sig.t !== 'offer') return 'expected an offer, got ' + sig.t;
+  return D.net.mode === 'host' || 'mode did not switch to host';
+});
+
+t('R140 joining with a valid invite produces a reply code', function () {
+  resetInput(); D.start('COOP-03'); pump(4);
+  var invite = global.CW.packSignal({ t: 'offer', sdp: 'v=0 fake-offer' });
+  getEl('coopIn').value = invite;
+  getEl('btnCoopJoin').fire('click', { preventDefault: function () {} });
+  for (var i = 0; i < 40; i++) pump(1);
+  var reply = global.CW.unpackSignal(getEl('coopOut').value);
+  if (!reply || reply.error) return 'no valid reply produced';
+  if (reply.t !== 'answer') return 'expected an answer, got ' + reply.t;
+  return D.net.mode === 'client' || 'mode did not switch to client';
+});
+
+t('R141 an invalid paste is reported and does not connect', function () {
+  resetInput(); D.start('COOP-04'); pump(4);
+  getEl('coopIn').value = 'not a real code at all';
+  getEl('btnCoopJoin').fire('click', { preventDefault: function () {} });
+  pump(4);
+  var st = getEl('coopStatus').textContent || '';
+  if (st.indexOf('NOT VALID') < 0) return 'no error shown for a bad code: "' + st + '"';
+  return !D.net.connected || 'it connected on a bad code';
+});
+
+t('R142 host snapshots carry the whole world', function () {
+  resetInput(); D.start('COOP-05'); pump(4); resetInput();
+  D.setNetMode('host');
+  D.setKey('N0'); D.setKey('N1');
+  for (var f = 0; f < 1200; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  var snap = global.CW.decSnapshot(D.hostSnapshot());
+  if (!snap) return 'snapshot did not decode';
+  if (snap.enemies.length !== D.enemies.length) {
+    return 'snapshot has ' + snap.enemies.length + ' enemies but the world has ' + D.enemies.length;
+  }
+  if (snap.nodes.length !== D.nodes.length) return 'node states missing from the snapshot';
+  var ids = {};
+  for (var i = 0; i < snap.enemies.length; i++) {
+    if (ids[snap.enemies[i].id]) return 'duplicate enemy id in the snapshot';
+    ids[snap.enemies[i].id] = 1;
+  }
+  console.log('         [coop] snapshot: ' + snap.enemies.length + ' enemies, ' +
+              JSON.stringify(D.hostSnapshot()).length + ' bytes');
+  D.setNetMode('solo');
+  return true;
+});
+
+t('R143 a client mirrors the host world from snapshots', function () {
+  /* build a snapshot as a host would, then feed it to a client instance */
+  resetInput(); D.start('COOP-06'); pump(4); resetInput();
+  D.setNetMode('host');
+  D.setKey('N0'); D.setKey('N1');
+  for (var f = 0; f < 900; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  var snap = D.hostSnapshot();
+  var hostCount = D.enemies.length;
+  if (hostCount < 2) return 'not enough enemies to test with';
+
+  /* same ship code, now as a client with an empty world */
+  resetInput(); D.start('COOP-06'); pump(4); resetInput();
+  D.setNetMode('client');
+  D.netHandle(snap);
+  pump(2);
+  if (D.enemies.length !== hostCount) {
+    return 'client mirrored ' + D.enemies.length + ' of ' + hostCount + ' enemies';
+  }
+  /* now send a snapshot with fewer enemies and confirm the client prunes */
+  var decoded = global.CW.decSnapshot(snap);
+  decoded.enemies = decoded.enemies.slice(0, 1);
+  var shrunk = global.CW.encSnapshot({
+    tick: 2, enemies: decoded.enemies, bossState: 0, bossArmor: 3, bossArena: 240,
+    nodes: decoded.nodes, taken: decoded.taken, phase: decoded.phase,
+    waveState: 0, wave: 1, alert: 0
+  });
+  D.netHandle(shrunk);
+  pump(2);
+  var got = D.enemies.length;
+  D.setNetMode('solo');
+  return got === 1 || 'client did not prune down to 1 enemy, has ' + got;
+});
+
+t('R144 a client does not run its own spawner', function () {
+  resetInput(); D.start('COOP-07'); pump(4); resetInput();
+  D.setNetMode('client');
+  D.setKey('N0'); D.setKey('N1');
+  for (var f = 0; f < 2500; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  var n = D.enemies.length;
+  D.setNetMode('solo');
+  return n === 0 || 'a client spawned ' + n + ' enemies of its own';
+});
+
+t('R145 a client does not run the boss FSM', function () {
+  resetInput(); D.start('COOP-08'); pump(4); resetInput();
+  D.setNetMode('client');
+  D.setKey('N0'); D.setKey('N1');
+  var R = D.ship.rooms[D.ship.reactorRoom];
+  var st0 = D.boss.state;
+  for (var f = 0; f < 1500; f++) {
+    D.player.pos.x = R.cx; D.player.pos.z = R.cz + 5;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+  }
+  var st1 = D.boss.state;
+  D.setNetMode('solo');
+  return st1 === st0 || 'the client advanced the boss from ' + st0 + ' to ' + st1;
+});
+
+t('R146 remote avatars appear, move and are removed', function () {
+  resetInput(); D.start('COOP-09'); pump(4); resetInput();
+  D.setNetMode('host');
+  D.netHandle(global.CW.encAvatar({ x: 5, z: 5, yaw: 0, pitch: 0, wep: 0, hp: 100, moving: true, down: false, charges: 0, name: 'MATE' }));
+  pump(2);
+  var ids = Object.keys(D.net.peers);
+  if (ids.length !== 1) return 'expected 1 peer, got ' + ids.length;
+  var p = D.net.peers[ids[0]];
+  if (!p.rig || !p.rig.g) return 'the peer has no astronaut rig';
+  if (!p.rig.legs || p.rig.legs.length !== 2) return 'the peer rig is not articulated';
+  /* it should interpolate toward a new position rather than teleport */
+  D.netHandle(global.CW.encAvatar({ x: 25, z: 25, yaw: 1, pitch: 0, wep: 0, hp: 100, moving: true, down: false, charges: 0, name: 'MATE' }));
+  var before = p.x;
+  for (var f = 0; f < 30; f++) pump(1);
+  if (p.x === before) return 'the peer did not move';
+  if (Math.abs(p.x - 25) > 4) return 'the peer never arrived (x=' + p.x.toFixed(1) + ')';
+  D.setNetMode('solo');
+  return true;
+});
+
+t('R147 in co-op you go down instead of dying, and can bleed out', function () {
+  resetInput(); D.start('COOP-10'); pump(4); resetInput();
+  D.setNetMode('host');
+  D.netHandle(global.CW.encAvatar({ x: 999, z: 999, yaw: 0, pitch: 0, wep: 0, hp: 100, moving: false, down: false, charges: 0, name: 'FAR' }));
+  D.give('invuln', 0);
+  D.hurt(200);
+  pump(2);
+  if (D.ended) return 'the run ended instead of going down';
+  if (!D.S.down) return 'the player did not enter the downed state';
+  /* no one comes: the bleed timer must eventually end the run */
+  for (var f = 0; f < 60 * 30 + 200 && !D.ended; f++) { D.give('invuln', 9999); pump(1); }
+  var ended = D.ended;
+  D.setNetMode('solo');
+  return ended || 'a downed player never bled out';
+});
+
+t('R148 a nearby crewmate revives you', function () {
+  resetInput(); D.start('COOP-11'); pump(4); resetInput();
+  D.setNetMode('host');
+  D.give('invuln', 0);
+  D.hurt(200);
+  pump(2);
+  if (!D.S.down) return 'the player is not down';
+  /* park a healthy teammate on top of the player */
+  for (var f = 0; f < 200 && D.S.down; f++) {
+    D.netHandle(global.CW.encAvatar({
+      x: D.player.pos.x, z: D.player.pos.z, yaw: 0, pitch: 0,
+      wep: 0, hp: 100, moving: false, down: false, charges: 0, name: 'HELP'
+    }));
+    D.give('invuln', 9999);
+    pump(1);
+  }
+  var up = !D.S.down;
+  D.setNetMode('solo');
+  return up || 'a crewmate standing on the player never revived them';
+});
+
+t('R149 a downed player cannot move or shoot', function () {
+  resetInput(); D.start('COOP-12'); pump(4); resetInput();
+  D.setNetMode('host');
+  D.give('invuln', 0); D.hurt(200); pump(2);
+  if (!D.S.down) return 'the player is not down';
+  var p0 = { x: D.player.pos.x, z: D.player.pos.z };
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  for (var f = 0; f < 60; f++) { D.give('invuln', 9999); pump(1); }
+  global.window.fire('keyup', { code: 'KeyW', preventDefault: function () {} });
+  var moved = Math.hypot(D.player.pos.x - p0.x, D.player.pos.z - p0.z);
+  D.setNetMode('solo');
+  return moved < 0.2 || 'a downed player moved ' + moved.toFixed(2) + ' units';
+});
+
+t('R150 solo play is unaffected by any of this', function () {
+  var fails = [];
+  for (var i = 0; i < 5; i++) {
+    var r = playthrough('SOLORUN' + i);
+    if (r !== true) fails.push('SOLORUN' + i + ': ' + r);
+  }
+  if (fails.length) return fails.length + ' failed, first -> ' + fails[0];
+  return D.net.mode === 'solo' || 'solo play left the net mode as ' + D.net.mode;
 });
 
 console.log('\n' + log.join('\n'));

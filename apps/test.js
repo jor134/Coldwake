@@ -776,6 +776,130 @@ t('13.7 progress rises monotonically to exactly 1', function () {
   return 'never completed';
 });
 
+
+/* ============ 14. NETCODE ============ */
+t('14.1 signal blobs survive a copy-paste round trip', function () {
+  var obj = { type: 'offer', sdp: 'v=0\r\no=- 1 2 IN IP4 127.0.0.1\r\ns=-\r\n' };
+  var packed = CW.packSignal(obj);
+  var back = CW.unpackSignal(packed);
+  if (!back || back.error) return 'unpack failed: ' + JSON.stringify(back);
+  return back.sdp === obj.sdp || 'sdp corrupted';
+});
+t('14.2 whitespace and line breaks in a pasted code are tolerated', function () {
+  var packed = CW.packSignal({ type: 'answer', sdp: 'abc' });
+  var messy = '  ' + packed.slice(0, 20) + '\n' + packed.slice(20, 40) + '\r\n  ' + packed.slice(40) + '  ';
+  var back = CW.unpackSignal(messy);
+  return (back && back.sdp === 'abc') || 'messy paste failed';
+});
+t('14.3 garbage and version mismatches are reported, not thrown', function () {
+  if (CW.unpackSignal('') !== null) return 'empty input not handled';
+  if (CW.unpackSignal('hello world') !== null) return 'garbage not rejected';
+  var bad = CW.unpackSignal('CW999:zzzz');
+  if (!bad || bad.error !== 'version') return 'version mismatch not reported';
+  var corrupt = CW.unpackSignal('CW' + CW.NET_VERSION + ':!!!notbase64!!!');
+  if (!corrupt || !corrupt.error) return 'corrupt payload not reported';
+  return true;
+});
+t('14.4 avatar encoding round-trips within tolerance', function () {
+  var a = { x: 12.3456, z: -7.891, yaw: 1.2345, pitch: -0.6789, wep: 2, hp: 73, moving: true, down: false, charges: 3, name: 'ALEX' };
+  var b = CW.decAvatar(CW.encAvatar(a));
+  if (!b) return 'decode failed';
+  if (Math.abs(b.x - a.x) > 0.02 || Math.abs(b.z - a.z) > 0.02) return 'position drift too large';
+  if (Math.abs(b.yaw - a.yaw) > 0.002) return 'yaw drift too large';
+  if (b.wep !== 2 || b.hp !== 73 || b.charges !== 3) return 'fields corrupted';
+  return (b.moving === true && b.down === false && b.name === 'ALEX') || 'flags corrupted';
+});
+t('14.5 snapshot round-trips every field', function () {
+  var w = {
+    tick: 812,
+    enemies: [{ id: 1, kindIdx: 0, x: 3.14, z: -2.72, yaw: 1.1, wind: 0 },
+              { id: 7, kindIdx: 3, x: -40.5, z: 12.25, yaw: -2.2, wind: 0.3 }],
+    bossState: 3, bossArmor: 2, bossArena: 187,
+    nodes: [1, 1, 0], taken: [4, 9], phase: 2, waveState: 2, wave: 5, alert: 1
+  };
+  var s2 = CW.decSnapshot(CW.encSnapshot(w));
+  if (!s2) return 'decode failed';
+  if (s2.tick !== 812 || s2.phase !== 2 || s2.wave !== 5 || s2.alert !== 1) return 'scalars corrupted';
+  if (s2.bossState !== 3 || s2.bossArmor !== 2) return 'boss state corrupted';
+  if (s2.enemies.length !== 2) return 'enemy count wrong';
+  if (Math.abs(s2.enemies[1].x + 40.5) > 0.03) return 'enemy position drift';
+  if (s2.nodes.join(',') !== '1,1,0') return 'node states corrupted';
+  return s2.taken.join(',') === '4,9' || 'taken list corrupted';
+});
+t('14.6 applying a snapshot spawns, updates and removes to match', function () {
+  var mirror = {}, log = [];
+  var hooks = {
+    spawn: function (id, k, x, z) { log.push('spawn' + id); return { id: id, k: k, x: x, z: z }; },
+    update: function (rec, e) { rec.x = e.x; rec.z = e.z; },
+    remove: function (rec, id) { log.push('remove' + id); }
+  };
+  var s1 = CW.decSnapshot(CW.encSnapshot({ tick: 1, enemies: [
+    { id: 1, kindIdx: 0, x: 0, z: 0, yaw: 0, wind: 0 },
+    { id: 2, kindIdx: 1, x: 5, z: 5, yaw: 0, wind: 0 }], bossState: 0, bossArmor: 3, bossArena: 240 }));
+  var r1 = CW.applySnapshot(mirror, s1, hooks);
+  if (r1.spawned !== 2) return 'expected 2 spawns, got ' + r1.spawned;
+  var s2 = CW.decSnapshot(CW.encSnapshot({ tick: 2, enemies: [
+    { id: 2, kindIdx: 1, x: 9, z: 9, yaw: 0, wind: 0 },
+    { id: 3, kindIdx: 2, x: 1, z: 1, yaw: 0, wind: 0 }], bossState: 0, bossArmor: 3, bossArena: 240 }));
+  var r2 = CW.applySnapshot(mirror, s2, hooks);
+  if (r2.spawned !== 1 || r2.removed !== 1) return 'expected 1 spawn / 1 remove, got ' + r2.spawned + '/' + r2.removed;
+  if (mirror[2].x !== 9) return 'existing enemy not updated';
+  return (!mirror[1] && !!mirror[3]) || 'mirror does not match the snapshot';
+});
+t('14.7 an empty snapshot clears the mirror', function () {
+  var mirror = { 5: { id: 5 } }, removed = 0;
+  var snap = CW.decSnapshot(CW.encSnapshot({ tick: 3, enemies: [], bossState: 0, bossArmor: 0, bossArena: 0 }));
+  CW.applySnapshot(mirror, snap, { spawn: function () {}, update: function () {}, remove: function () { removed++; } });
+  return (removed === 1 && !mirror[5]) || 'mirror not cleared';
+});
+t('14.8 snapshots stay small enough for a data channel', function () {
+  var en = [];
+  for (var i = 0; i < 20; i++) en.push({ id: i, kindIdx: i % 4, x: i * 3.33, z: -i * 7.77, yaw: 1.234, wind: 0 });
+  var bytes = JSON.stringify(CW.encSnapshot({ tick: 9999, enemies: en, bossState: 1, bossArmor: 3,
+    bossArena: 240, nodes: [1, 0, 0], taken: [1, 2, 3, 4, 5], phase: 3, waveState: 2, wave: 9, alert: 3 })).length;
+  if (bytes > 1400) return 'snapshot is ' + bytes + ' bytes — too big for one datagram';
+  var perSec = bytes * CW.NET_SNAPSHOT_HZ;
+  return perSec < 30000 || (perSec / 1000).toFixed(0) + 'KB/s is too much bandwidth';
+});
+t('14.9 action messages round-trip', function () {
+  var a = CW.decAction(CW.encAction('interact', 3, 0, 0));
+  if (!a || a.kind !== 'interact' || a.a !== 3) return 'action corrupted';
+  var b = CW.decAction(CW.encAction('damage', 7, 42));
+  return (b.kind === 'damage' && b.a === 7 && b.b === 42) || 'multi-arg action corrupted';
+});
+t('14.10 decoders reject messages of the wrong type', function () {
+  if (CW.decAvatar(CW.encSnapshot({ enemies: [] }))) return 'avatar decoder accepted a snapshot';
+  if (CW.decSnapshot(CW.encAvatar({ x: 0, z: 0, yaw: 0, pitch: 0 }))) return 'snapshot decoder accepted an avatar';
+  if (CW.decAction(['S'])) return 'action decoder accepted a snapshot';
+  return (CW.decAvatar(null) === null && CW.decSnapshot(undefined) === null) || 'null input not handled';
+});
+t('14.11 revive needs a teammate present for the full duration', function () {
+  var st = { t: 0 };
+  var done = false, secs = 0;
+  while (secs < 20 && !done) { done = CW.reviveStep(st, 0.05, { down: true, helperNear: true }).done; secs += 0.05; }
+  if (!done) return 'revive never completed';
+  return Math.abs(secs - CW.REVIVE_TIME) < 0.2 || 'revive took ' + secs.toFixed(2) + 's';
+});
+t('14.12 revive progress decays if the helper walks away', function () {
+  var st = { t: 0 };
+  for (var i = 0; i < 40; i++) CW.reviveStep(st, 0.05, { down: true, helperNear: true });
+  var peak = st.t;
+  for (var j = 0; j < 20; j++) CW.reviveStep(st, 0.05, { down: true, helperNear: false });
+  if (!(st.t < peak)) return 'progress did not decay';
+  return st.t >= 0 || 'progress went negative';
+});
+t('14.13 a downed player bleeds out on a timer', function () {
+  var st = { t: 0 }, secs = 0, r;
+  while (secs < 120) { r = CW.reviveStep(st, 0.1, { down: true, helperNear: false }); secs += 0.1; }
+  return r.bleed >= CW.DOWN_BLEED || 'bleed timer not tracked';
+});
+t('14.14 standing up clears the downed timer', function () {
+  var st = { t: 0 };
+  for (var i = 0; i < 100; i++) CW.reviveStep(st, 0.05, { down: true, helperNear: true });
+  var r = CW.reviveStep(st, 0.05, { down: false });
+  return (r.progress === 0 && st.t === 0) || 'state not cleared on standing up';
+});
+
 console.log('\n' + log.join('\n'));
 console.log('\n' + '='.repeat(52));
 console.log('  PASS ' + pass + '   FAIL ' + fail + '   TOTAL ' + (pass + fail));
