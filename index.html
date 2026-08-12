@@ -45,6 +45,16 @@ canvas{display:block;position:fixed;inset:0}
 .wep .amt{display:block;font-size:8px;color:#ffd08a;margin-top:2px}
 
 #chg{position:absolute;bottom:calc(66px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:150px;height:5px;background:#0b131c;border:1px solid #1f2c39;display:none}
+#field{position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:190px;display:none;text-align:center}
+#fieldBar{height:6px;background:#0b131c;border:1px solid #3a5f22}
+#fieldF{height:100%;width:0;background:linear-gradient(90deg,#7dffa0,#d8ffb0);box-shadow:0 0 10px #7dffa0}
+#fieldT{font-size:8px;letter-spacing:.18em;color:#9fd88a;margin-top:4px}
+#fieldBtn{position:absolute;left:calc(150px + env(safe-area-inset-left));bottom:calc(46px + env(safe-area-inset-bottom));width:62px;height:62px;border-radius:50%;border:1px solid rgba(90,170,90,.5);background:rgba(16,42,20,.44);pointer-events:auto;display:none;z-index:3;font-size:8px;letter-spacing:.1em;color:#b8ffa0;text-align:center;line-height:62px}
+body.touch #fieldBtn{display:block}
+.wep.empty{opacity:.5;border-color:#3a2020}
+.wep.empty .amt{color:#ff7a6a}
+.wep.ready{border-color:#7a5cff}
+.wep.ready .amt{color:#c9a7ff}
 #chgF{height:100%;width:0;background:linear-gradient(90deg,#7a5cff,#c9a7ff);box-shadow:0 0 10px #9b7cff}
 
 #lookZone{position:absolute;inset:0;pointer-events:none}
@@ -121,6 +131,7 @@ body.xr #hud{display:none}
     <div id="arenaT"></div>
   </div>
   <div id="chg"><div id="chgF"></div></div>
+  <div id="field"><div id="fieldBar"><div id="fieldF"></div></div><div id="fieldT"></div></div>
   <div id="weps">
     <div class="wep sel" data-w="0">SIDEARM<span class="amt">∞</span></div>
     <div class="wep" data-w="1">TORCH<span class="amt">melee</span></div>
@@ -135,6 +146,7 @@ body.xr #hud{display:none}
   <div id="lookZone"></div>
   <div class="stick" id="stickL"><i></i></div>
   <div id="fireBtn">FIRE</div>
+  <div id="fieldBtn">CHARGE</div>
   <div id="viewBtn">1ST / 3RD</div>
   <div id="muteBtn">SOUND: ON</div>
   <div id="vrBtn">ENTER VR</div>
@@ -144,7 +156,7 @@ body.xr #hud{display:none}
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 10</div>
+  <div class="sub">VERTICAL SLICE · BUILD 11</div>
   <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
   <p style="font-size:10px;color:#5f7f96;margin-bottom:14px">HEADPHONES RECOMMENDED — THE SCORE REACTS TO WHAT IS HUNTING YOU</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
@@ -156,9 +168,9 @@ body.xr #hud{display:none}
   <div class="hint">
     EVERY SHIP CODE GENERATES A DIFFERENT VESSEL<br>
     DESKTOP — CLICK TO LOCK MOUSE · WASD MOVE · MOUSE LOOK · LMB FIRE · RMB CHARGE RIFLE<br>
-    E INTERACT · 1/2/3 WEAPONS · V VIEW · M SOUND · SHIFT SPRINT · ESC RELEASE MOUSE<br>
+    E INTERACT · 1/2/3 WEAPONS · R FIELD-CHARGE RIFLE · V VIEW · M SOUND · SHIFT SPRINT<br>
     MOBILE — LEFT STICK MOVE · DRAG TO LOOK · FIRE BUTTON · TAP PROMPT TO INTERACT<br>
-    QUEST 3 — ENTER VR APPEARS WHEN SUPPORTED · LEFT STICK MOVES · RIGHT STICK SNAP TURNS · TRIGGER FIRES · GRIP INTERACTS
+    QUEST 3 — LEFT STICK MOVES · RIGHT STICK SNAP TURNS · TRIGGER FIRES · RIGHT GRIP INTERACTS · LEFT GRIP FIELD-CHARGES
   </div>
 </div>
 
@@ -194,7 +206,10 @@ CW.CFG = {
   O2_MAX: 100,
   O2_DRAIN_PRE_N1: 0.55,  // per second, global before scrubber
   PLAYER_HP: 100,
-  CELL_CAP: 2,            // containment cell capacity
+  CELL_CAP: 3,            // containment cell capacity — must match RIFLE_CAP or a
+                          // full rifle load cannot survive the walk to the boss
+  FIELD_CHARGE: 4.0,      // s to charge one round in the field
+  FIELD_CHARGE_RANGE: 3.0,
   N0_SCRAP: 4,
   N1_SCRAP: 8, N1_MESH: 2,
   SCRAP_SLACK: 1.7,       // place this multiple of required scrap
@@ -751,6 +766,44 @@ CW.bossAddAllowed = function (bossState, alive, cap) {
   /* a hard low cap, not a fraction of the global one: the arena is about the
      boss, and a swarm there makes the vent window impossible to use */
   return alive < Math.min(CW.BOSS_ADD_CAP, Math.max(2, Math.floor((cap || 8) * 0.5)));
+};
+
+/* ---------- FIELD CHARGING ----------
+   The bench charges the rifle instantly to capacity, but it lives in the hub.
+   Without a field option a player who arrives at the boss short of charges has
+   no play except a long round trip, which is not a decision, just a walk. */
+CW.FIELD_LOCKOUT = 1.1;
+CW.newFieldCharge = function () { return { t: 0, active: false, lock: 0 }; };
+
+/* returns {done, progress, cancelled} */
+CW.fieldChargeStep = function (fc, dt, ctx) {
+  ctx = ctx || {};
+  var out = { done: false, progress: 0, cancelled: false };
+  if (!ctx.holding || !ctx.hasCrystal || ctx.rifleFull) {
+    if (fc.active) out.cancelled = true;
+    fc.active = false; fc.t = 0;
+    if (fc.lock > 0) fc.lock -= dt;
+    return out;
+  }
+  /* taking a hit breaks the channel: charging in the open has to be a risk */
+  if (ctx.hurtSince) {
+    fc.active = false; fc.t = 0; fc.lock = CW.FIELD_LOCKOUT;
+    out.cancelled = true;
+    return out;
+  }
+  /* the lockout is what makes an interruption cost something — without it the
+     channel simply restarts on the next frame and being hit is free */
+  if (fc.lock > 0) {
+    fc.lock -= dt;
+    fc.active = false;
+    out.locked = true;
+    return out;
+  }
+  fc.active = true;
+  fc.t += dt;
+  out.progress = Math.min(1, fc.t / CW.CFG.FIELD_CHARGE);
+  if (fc.t >= CW.CFG.FIELD_CHARGE) { fc.t = 0; fc.active = false; out.done = true; out.progress = 1; }
+  return out;
 };
 
 CW.BOSS_STATES = ['DORMANT', 'AGGRESSIVE', 'ARMORED', 'VENT', 'STAGGER', 'DEAD', 'FLED'];
@@ -3295,7 +3348,7 @@ function toast(msg) {
 }
 function hurtPlayer(dmg, sx, sz) {
   if (S.invuln > 0 || ended) return;
-  S.hp -= dmg; S.invuln = CFG.INVULN; S.shake = Math.min(1, dmg / 22);
+  S.hp -= dmg; S.invuln = CFG.INVULN; S.shake = Math.min(1, dmg / 22); S.fcHurt = true;
   $('flash').style.opacity = Math.min(0.95, dmg / 26); SFX.hurt();
   setTimeout(function () { $('flash').style.opacity = 0; }, 130);
   /* directional hit marker: without this, being eaten from behind reads as
@@ -3387,6 +3440,10 @@ function initInput() {
   $('viewBtn').addEventListener('pointerdown', function (e) { e.preventDefault(); toggleView(); });
   $('muteBtn').addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); toggleMute(); });
   $('vrBtn').addEventListener('click', function (e) { e.preventDefault(); enterVR(); });
+  var fb = $('fieldBtn');
+  fb.addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); S.fieldBtn = true; });
+  fb.addEventListener('pointerup', function (e) { e.preventDefault(); S.fieldBtn = false; });
+  fb.addEventListener('pointercancel', function () { S.fieldBtn = false; });
 
   if (isTouch) {
     document.body.classList.add('touch');
@@ -3453,14 +3510,29 @@ function toggleView() {
   if (player) player.g.visible = !firstPerson;
 }
 function setWep(w) {
-  if (w === 2 && S.charges <= 0) { toast('RIFLE HAS NO CHARGE — FIND VOIDGLASS'); return; }
+  /* the rifle is always selectable. Blocking the switch left a player at the
+     boss with no way to even see the weapon or learn what it needed. */
+  if (w === 2 && S.charges <= 0) {
+    toast(S.crystals.length
+      ? 'RIFLE EMPTY — HOLD ' + (isTouch ? 'THE CHARGE BUTTON' : 'R') + ' TO FIELD-CHARGE A ROUND'
+      : 'RIFLE EMPTY — FIND VOIDGLASS');
+  }
   S.wep = w; charging = false; S.charging = 0; firing = false;
   var ws = document.querySelectorAll('.wep');
   for (var i = 0; i < ws.length; i++) ws[i].classList.toggle('sel', i === w);
   $('chg').style.display = w === 2 ? 'block' : 'none';
 }
 function releaseCharge() {
-  if (S.wep === 2 && S.charging >= 1) { S.charges--; fireBeam(); $('rifleAmt').textContent = S.charges; if (S.charges <= 0) setWep(0); }
+  if (S.wep === 2 && S.charging >= 1) {
+    if (S.charges > 0) {
+      S.charges--; fireBeam(); $('rifleAmt').textContent = S.charges;
+    } else {
+      toast(S.crystals.length
+        ? 'NO CHARGE — HOLD ' + (isTouch ? 'CHARGE' : 'R') + ' TO LOAD A ROUND'
+        : 'NO CHARGE AND NO VOIDGLASS');
+      blip(140, 0.16, 'square', 0.1, 60);
+    }
+  }
   charging = false; S.charging = 0; $('chgF').style.width = '0%';
 }
 
@@ -3598,6 +3670,46 @@ function spawnTick(dt) {
   spawnEnemy(CW.rollEnemy(phase, S.alert, Math.random()), p.x, p.z);
 }
 
+/* ---- field charging: convert one held crystal into a round, anywhere ---- */
+function fieldChargeTick(dt) {
+  var holding = !!(keys.KeyR || S.fieldBtn);
+  var res = CW.fieldChargeStep(S.fc, dt, {
+    holding: holding,
+    hasCrystal: S.crystals.length > 0,
+    rifleFull: S.charges >= CFG.RIFLE_CAP,
+    hurtSince: S.fcHurt
+  });
+  S.fcHurt = false;
+
+  var bar = $('field');
+  if (res.done) {
+    S.crystals.pop();
+    S.charges++;
+    $('rifleAmt').textContent = S.charges;
+    S.alert = CW.alertFromHot(hotCount());
+    SFX.power();
+    toast('ROUND LOADED — ' + S.charges + '/' + CFG.RIFLE_CAP);
+    bar.style.display = 'none';
+    return;
+  }
+  if (res.cancelled && S.fcWas) {
+    toast('CHARGE INTERRUPTED');
+    noise(0.2, 0.12, 700, 2);
+  }
+  S.fcWas = S.fc.active;
+
+  if (S.fc.active) {
+    bar.style.display = 'block';
+    $('fieldF').style.width = (res.progress * 100) + '%';
+    $('fieldT').textContent = 'FIELD-CHARGING  ' + (CFG.FIELD_CHARGE * (1 - res.progress)).toFixed(1) + 's';
+    if (Math.random() < 0.25) blip(300 + res.progress * 700, 0.05, 'sine', 0.04);
+  } else if (holding && !S.crystals.length) {
+    bar.style.display = 'block';
+    $('fieldF').style.width = '0%';
+    $('fieldT').textContent = 'NO VOIDGLASS TO BURN';
+  } else bar.style.display = 'none';
+}
+
 /* ================= TUTORIAL ================= */
 var TUT = [
   { t: 'MOVE', s: function () { return isTouch ? 'LEFT STICK' : 'W A S D'; }, ok: function () { return S.tutMove > 4; } },
@@ -3663,7 +3775,8 @@ function update(dt) {
   /* --- firing --- */
   S.cool -= dt; S.recoil = Math.max(0, S.recoil - dt * 6); S.kick = Math.max(0, S.kick - dt * 3.4);
   if (S.wep === 2) {
-    if (charging) {
+    if (charging && S.charges <= 0) { S.charging = 0; $('chgF').style.width = '0%'; }
+    else if (charging) {
       S.charging = Math.min(1, S.charging + dt / 1.2);
       $('chgF').style.width = (S.charging * 100) + '%';
       if (S.charging === 1 && !S._chgDone) { S._chgDone = true; SFX.charge(); }
@@ -3874,6 +3987,7 @@ function update(dt) {
     if (M.d) M.d.style.opacity = String(Math.max(0, 1 - M.t / 1.1));
   }
 
+  fieldChargeTick(dt);
   updateFlow(dt);
   updateExterior(dt);
   ambienceTick(dt);
@@ -4051,6 +4165,11 @@ function updateHUD() {
   $('hpF').style.width = (S.hp / CFG.PLAYER_HP * 100) + '%';
   $('o2F').style.width = (S.o2 / CFG.O2_MAX * 100) + '%';
   var hot = hotCount();
+  var wr = document.querySelectorAll('.wep')[2];
+  if (wr) {
+    wr.classList.toggle('empty', S.charges <= 0);
+    wr.classList.toggle('ready', S.charges > 0);
+  }
   $('inv').innerHTML =
     'SCRAP <b>' + S.scrap + '</b><br>MESH <b>' + S.mesh + '</b><br>' +
     '<span class="cry">VOIDGLASS ' + S.crystals.length + '</span>' + (hot ? ' <span class="hot">(' + hot + ' HOT)</span>' : '') +
@@ -4097,8 +4216,14 @@ function objective() {
   if (!S.keys.N0) return 'REPAIR EMERGENCY LIGHTING — SCRAP ' + S.scrap + '/' + CFG.N0_SCRAP;
   if (!S.keys.N1) return 'REPAIR ATMOSPHERE SCRUBBER IN HYDROPONICS — SCRAP ' + S.scrap + '/' + CFG.N1_SCRAP + ' · MESH ' + S.mesh + '/' + CFG.N1_MESH;
   if (S.part) return 'INSTALL THE COOLANT REGULATOR AT THE REACTOR';
-  if (S.charges <= 0) return 'EXTRACT VOIDGLASS · CHARGE THE RIFLE AT THE CRYOBAY BENCH';
-  return 'KILL THE BROODMOTHER — CHARGE RIFLE ONLY, DURING THE VENT';
+  if (S.charges <= 0 && S.crystals.length) {
+    return 'HOLD ' + (isTouch ? 'CHARGE' : 'R') + ' TO FIELD-CHARGE A ROUND  ·  VOIDGLASS ' + S.crystals.length;
+  }
+  if (S.charges <= 0) return 'EXTRACT VOIDGLASS IN HYDROPONICS — THE RIFLE IS EMPTY';
+  if (S.charges < CFG.ARMOR_TIERS) {
+    return 'RIFLE ' + S.charges + '/' + CFG.ARMOR_TIERS + ' — THE BROODMOTHER NEEDS ' + CFG.ARMOR_TIERS + ' CLEAN VENT HITS';
+  }
+  return 'KILL THE BROODMOTHER — PRESS 3 FOR THE RIFLE, FIRE DURING THE VENT';
 }
 
 /* ================= WEBXR =================
@@ -4118,7 +4243,12 @@ function initXR() {
     c.userData.idx = i;
     c.addEventListener('selectstart', function () { xrTrigger(true); });
     c.addEventListener('selectend', function () { xrTrigger(false); });
-    c.addEventListener('squeezestart', function () { doInteract(); });
+    c.addEventListener('squeezestart', function (ev) {
+      if (this.userData.idx === 0) S.fieldBtn = true; else doInteract();
+    });
+    c.addEventListener('squeezeend', function () {
+      if (this.userData.idx === 0) S.fieldBtn = false;
+    });
     buildControllerModel(c, i);
     xrCtrl.push(c);
   }
@@ -4221,7 +4351,8 @@ function startGame(code) {
     hp: CFG.PLAYER_HP, o2: CFG.O2_MAX, scrap: 0, mesh: 0, crystals: [], charges: 0,
     keys: {}, wep: 0, alert: 0, room: 0, invuln: 0, shake: 0, bob: 0, charging: 0, cool: 0,
     spawnT: 2, part: false, powerT1: false, yaw: 0, pitch: 0, recoil: 0, kick: 0,
-    elapsed: 0, phase: 0, hotEver: false, waves: CW.newWaves(), waveMsg: 0, tut: 0, tutOn: tutorialEnabled,
+    elapsed: 0, phase: 0, hotEver: false, waves: CW.newWaves(), waveMsg: 0,
+    fc: CW.newFieldCharge(), fcHurt: false, fcWas: false, fieldBtn: false, tut: 0, tutOn: tutorialEnabled,
     tutMove: 0, tutLook: 0, tutShots: 0, chitter: 0
   };
   dmgMarks = [];
@@ -4330,7 +4461,9 @@ window.__CW = {
   get xr() { return { on: xrOn, rig: xrRig, controllers: xrCtrl, supported: xrSupported }; },
   setXR: function (v) { xrOn = v; },
   get playerRig() { return player; },
-  get waves() { return S.waves; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
+  get waves() { return S.waves; },
+  get fc() { return S.fc; },
+  setField: function (v) { S.fieldBtn = v; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
   hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, rayWorld: rayWorld, PLR_R: PLR_R,
   start: function (c) { startGame(c); }, hurt: function (d) { hurtPlayer(d); },
   give: function (k, n) { S[k] = n; }, setKey: function (k) { S.keys[k] = true; openDoors(); },
