@@ -900,6 +900,111 @@ t('14.14 standing up clears the downed timer', function () {
   return (r.progress === 0 && st.t === 0) || 'state not cleared on standing up';
 });
 
+
+/* ============ 15. KV RELAY ============ */
+t('15.1 room codes are the right shape and normalise forgivingly', function () {
+  var r = CW.rng(31);
+  for (var i = 0; i < 500; i++) {
+    var c = CW.makeRoom(r);
+    if (c.length !== CW.ROOM_LEN) return 'room code length ' + c.length;
+    if (!/^[A-Z0-9]+$/.test(c)) return 'room code has awkward characters: ' + c;
+    /* the alphabet must avoid characters people confuse when reading aloud */
+    if (/[OIS15BZ]/.test(c)) return 'ambiguous character in ' + c;
+  }
+  if (CW.normRoom(' k7m-3pq ') !== 'K7M3PQ') return 'normalisation failed: ' + CW.normRoom(' k7m-3pq ');
+  if (CW.normRoom('abc') !== 'ABC') return 'short codes should still normalise';
+  return CW.normRoom(null) === '' || 'null room not handled';
+});
+t('15.2 the two directions never share a key', function () {
+  var h = CW.relayKey('ABC123', 'h'), c = CW.relayKey('ABC123', 'c');
+  if (h === c) return 'both sides write to the same list';
+  if (CW.otherSide('h') !== 'c' || CW.otherSide('c') !== 'h') return 'side flip is wrong';
+  return CW.relayKey('abc123', 'h') === h || 'key is case sensitive';
+});
+t('15.3 the pipeline sends and reads in one round trip', function () {
+  var cmds = CW.relayPipeline('ROOM01', 'h', ['{"m":1}', '{"m":2}'], 4);
+  var pushes = cmds.filter(function (c) { return c[0] === 'RPUSH'; });
+  var ranges = cmds.filter(function (c) { return c[0] === 'LRANGE'; });
+  var expires = cmds.filter(function (c) { return c[0] === 'EXPIRE'; });
+  if (pushes.length !== 2) return 'expected 2 pushes, got ' + pushes.length;
+  if (ranges.length !== 1) return 'expected exactly 1 read';
+  if (!expires.length) return 'no TTL set — rooms would leak forever';
+  if (ranges[0][1] !== CW.relayKey('ROOM01', 'c')) return 'reading the wrong list';
+  return ranges[0][2] === '4' || 'cursor not honoured';
+});
+t('15.4 an empty outbox still polls, without touching the TTL', function () {
+  var cmds = CW.relayPipeline('ROOM02', 'c', [], 0);
+  if (cmds.length !== 1) return 'expected only a read, got ' + cmds.length + ' commands';
+  return cmds[0][0] === 'LRANGE' || 'empty outbox did not produce a read';
+});
+t('15.5 responses parse and skip corrupt entries', function () {
+  var res = [{ result: 1 }, { result: 'OK' }, { result: ['["A",1,2]', 'not json', '["X","interact",3]'] }];
+  var p = CW.relayParse(res);
+  if (!p.ok) return 'parse reported failure';
+  if (p.msgs.length !== 2) return 'expected 2 usable messages, got ' + p.msgs.length;
+  return p.msgs[1][1] === 'interact' || 'message order or content wrong';
+});
+t('15.6 a failed or empty response is handled, not thrown', function () {
+  if (CW.relayParse(null).ok) return 'null response reported ok';
+  if (CW.relayParse({ error: 'boom' }).ok) return 'error response reported ok';
+  var empty = CW.relayParse([{ result: [] }]);
+  return (empty.ok && empty.msgs.length === 0) || 'empty list mishandled';
+});
+t('15.7 batching keeps only the newest avatar and snapshot', function () {
+  var q = [];
+  for (var i = 0; i < 20; i++) q.push(['A', i]);
+  for (var j = 0; j < 5; j++) q.push(['S', j]);
+  var out = CW.relayBatch(q, 12);
+  var as = out.filter(function (m) { return m[0] === 'A'; });
+  var ss = out.filter(function (m) { return m[0] === 'S'; });
+  if (as.length !== 1 || ss.length !== 1) return 'expected 1 avatar and 1 snapshot, got ' + as.length + '/' + ss.length;
+  if (as[0][1] !== 19) return 'kept a stale avatar (' + as[0][1] + ')';
+  return ss[0][1] === 4 || 'kept a stale snapshot';
+});
+t('15.8 batching never drops reliable actions', function () {
+  var q = [];
+  for (var i = 0; i < 8; i++) q.push(CW.encAction('node', i));
+  q.push(CW.encAvatar({ x: 0, z: 0, yaw: 0, pitch: 0 }));
+  var out = CW.relayBatch(q, 12);
+  var acts = out.filter(function (m) { return m[0] === 'X'; });
+  return acts.length === 8 || 'lost actions: kept ' + acts.length + ' of 8';
+});
+t('15.9 batching is bounded so a stall cannot send a huge payload', function () {
+  var q = [];
+  for (var i = 0; i < 500; i++) q.push(CW.encAction('hit', i, 1));
+  var out = CW.relayBatch(q, 12);
+  return out.length <= 14 || 'batch grew to ' + out.length + ' messages';
+});
+t('15.10 the lobby waits for a peer before negotiating', function () {
+  var lb = CW.newLobby('h');
+  CW.lobbyStep(lb, 0.1, {});
+  if (lb.state !== 'WAITING') return 'expected WAITING, got ' + lb.state;
+  for (var i = 0; i < 300; i++) CW.lobbyStep(lb, 0.1, {});
+  return lb.state === 'WAITING' || 'it advanced without a peer (' + lb.state + ')';
+});
+t('15.11 a peer connection wins when it forms', function () {
+  var lb = CW.newLobby('h');
+  CW.lobbyStep(lb, 0.1, {});
+  CW.lobbyStep(lb, 0.1, { peerHello: true });
+  CW.lobbyStep(lb, 0.1, { rtcOpen: true });
+  return (lb.state === 'CONNECTED' && lb.via === 'rtc') || 'state ' + lb.state + ' via ' + lb.via;
+});
+t('15.12 the relay takes over if the peer connection never forms', function () {
+  var lb = CW.newLobby('c'), t2 = 0;
+  CW.lobbyStep(lb, 0.1, {});
+  CW.lobbyStep(lb, 0.1, { peerHello: true });
+  while (lb.state !== 'CONNECTED' && t2 < 60) { CW.lobbyStep(lb, 0.1, {}); t2 += 0.1; }
+  if (lb.state !== 'CONNECTED') return 'it never fell back — a strict NAT would block play entirely';
+  if (lb.via !== 'relay') return 'fell back via ' + lb.via;
+  return Math.abs(t2 - CW.RTC_TIMEOUT) < 1.0 || 'fallback took ' + t2.toFixed(1) + 's';
+});
+t('15.13 relay poll rates keep request volume sane', function () {
+  var perSec = 1 / CW.RELAY_POLL_FAST;
+  /* one pipelined request per poll, per player */
+  if (perSec > 10) return perSec.toFixed(1) + ' requests/s per player is too many';
+  return CW.RELAY_POLL_IDLE > CW.RELAY_POLL_FAST || 'idle polling is not slower than active';
+});
+
 console.log('\n' + log.join('\n'));
 console.log('\n' + '='.repeat(52));
 console.log('  PASS ' + pass + '   FAIL ' + fail + '   TOTAL ' + (pass + fail));

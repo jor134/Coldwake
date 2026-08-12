@@ -256,7 +256,7 @@ global.document = {
 /* HUD elements that the code indexes into */
 var alertBars = getEl('alertBars'); alertBars.children = [new El('b0'), new El('b1'), new El('b2')];
 var armor = getEl('armor'); armor.children = [new El('a0'), new El('a1'), new El('a2')];
-['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','fieldBtn','viewBtn','muteBtn','vrBtn','lookZone','stickL','field','fieldBar','fieldF','fieldT','intro','introShip','introTitle','introOrders','introSkip','revive','reviveBar','reviveF','reviveT','coop','coopIn','coopOut','coopStatus','btnCoop','btnCoopHost','btnCoopJoin','btnCoopAccept'].forEach(getEl);
+['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','fieldBtn','viewBtn','muteBtn','vrBtn','lookZone','stickL','field','fieldBar','fieldF','fieldT','intro','introShip','introTitle','introOrders','introSkip','revive','reviveBar','reviveF','reviveT','coop','roomIn','roomOut','roomBox','coopStatus','btnCoop','btnCoopHost','btnCoopJoin','btnCoopLeave'].forEach(getEl);
 var introBody = getEl('introBody');
 introBody.children = [new El('ip0'), new El('ip1'), new El('ip2')];
 
@@ -356,6 +356,40 @@ function FakeChannel(name) {
   this._open = function () { self.readyState = 'open'; if (self.onopen) self.onopen(); };
 }
 global.FakeChannel = FakeChannel;
+/* Fake Upstash: honours RPUSH / LRANGE / EXPIRE against in-memory lists, so the
+   whole relay path runs without a network. */
+var KV = { lists: {}, requests: 0, fail: false, latency: 0 };
+KV.reset = function () { KV.lists = {}; KV.requests = 0; KV.fail = false; };
+KV.exec = function (cmds) {
+  KV.requests++;
+  var out = [];
+  for (var i = 0; i < cmds.length; i++) {
+    var c = cmds[i], op = String(c[0]).toUpperCase(), key = c[1];
+    if (op === 'RPUSH') {
+      KV.lists[key] = KV.lists[key] || [];
+      for (var j = 2; j < c.length; j++) KV.lists[key].push(c[j]);
+      out.push({ result: KV.lists[key].length });
+    } else if (op === 'EXPIRE') {
+      out.push({ result: 1 });
+    } else if (op === 'LRANGE') {
+      var l = KV.lists[key] || [];
+      var start = parseInt(c[2], 10);
+      out.push({ result: l.slice(start) });
+    } else out.push({ result: null });
+  }
+  return out;
+};
+global.KV = KV;
+global.fetch = function (url, opts) {
+  var cmds;
+  try { cmds = JSON.parse(opts.body); } catch (e) { cmds = []; }
+  if (KV.fail) {
+    return new SyncP({ ok: false, status: 503, json: function () { return new SyncP(null); } });
+  }
+  var res = KV.exec(cmds);
+  return new SyncP({ ok: true, status: 200, json: function () { return new SyncP(res); } });
+};
+
 function SyncP(v) { this.v = v; }
 SyncP.prototype.then = function (f) {
   var out;
@@ -408,7 +442,8 @@ function t(n, fn) {
 }
 
 var TARGET = process.argv.indexOf('--file') > -1 ? process.argv[process.argv.indexOf('--file') + 1] : null;
-var HTML = fs.readFileSync(TARGET || (__dirname + '/part1.html'), 'utf8');
+var HTML = TARGET ? fs.readFileSync(TARGET, 'utf8')
+  : (fs.readFileSync(__dirname + '/part1.html', 'utf8') + fs.readFileSync(__dirname + '/part2.js', 'utf8'));
 var coreSrc, gameSrc;
 if (TARGET) {
   var html = fs.readFileSync(TARGET, 'utf8');
@@ -2706,38 +2741,41 @@ t('R138 co-op starts disabled and the game runs solo', function () {
   return true;
 });
 
-t('R139 hosting produces a pasteable invite code', function () {
+t('R139 opening a room produces a short, readable code', function () {
+  KV.reset();
   resetInput(); D.start('COOP-02'); pump(4);
   getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
-  for (var i = 0; i < 40; i++) pump(1);
-  var code = getEl('coopOut').value;
-  if (!code) return 'no invite code was produced';
-  var sig = global.CW.unpackSignal(code);
-  if (!sig || sig.error) return 'the invite code does not parse: ' + JSON.stringify(sig);
-  if (sig.t !== 'offer') return 'expected an offer, got ' + sig.t;
-  return D.net.mode === 'host' || 'mode did not switch to host';
+  pump(4);
+  var code = getEl('roomOut').textContent;
+  if (!code) return 'no room code shown';
+  if (code.length !== global.CW.ROOM_LEN) return 'code length ' + code.length;
+  if (!/^[A-Z0-9]+$/.test(code)) return 'code is not readable aloud: ' + code;
+  if (D.net.mode !== 'host') return 'mode did not switch to host';
+  return D.relay.room === code || 'the relay is not using the displayed room';
 });
 
-t('R140 joining with a valid invite produces a reply code', function () {
+t('R140 joining a room needs only the code', function () {
+  KV.reset();
   resetInput(); D.start('COOP-03'); pump(4);
-  var invite = global.CW.packSignal({ t: 'offer', sdp: 'v=0 fake-offer' });
-  getEl('coopIn').value = invite;
+  getEl('roomIn').value = 'k7m3pq';        /* lower case, as typed */
   getEl('btnCoopJoin').fire('click', { preventDefault: function () {} });
-  for (var i = 0; i < 40; i++) pump(1);
-  var reply = global.CW.unpackSignal(getEl('coopOut').value);
-  if (!reply || reply.error) return 'no valid reply produced';
-  if (reply.t !== 'answer') return 'expected an answer, got ' + reply.t;
-  return D.net.mode === 'client' || 'mode did not switch to client';
+  pump(4);
+  if (D.net.mode !== 'client') return 'mode did not switch to client';
+  if (D.relay.room !== 'K7M3PQ') return 'room not normalised: ' + D.relay.room;
+  return D.relay.side === 'c' || 'joined on the wrong side';
 });
 
-t('R141 an invalid paste is reported and does not connect', function () {
+t('R141 a malformed room code is rejected with a clear message', function () {
+  KV.reset();
   resetInput(); D.start('COOP-04'); pump(4);
-  getEl('coopIn').value = 'not a real code at all';
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  pump(2);
+  getEl('roomIn').value = 'AB';
   getEl('btnCoopJoin').fire('click', { preventDefault: function () {} });
   pump(4);
   var st = getEl('coopStatus').textContent || '';
-  if (st.indexOf('NOT VALID') < 0) return 'no error shown for a bad code: "' + st + '"';
-  return !D.net.connected || 'it connected on a bad code';
+  if (st.indexOf('ROOM CODE') < 0) return 'no clear error: "' + st + '"';
+  return !D.relay.room || 'it joined on a bad code';
 });
 
 t('R142 host snapshots carry the whole world', function () {
@@ -2900,6 +2938,159 @@ t('R150 solo play is unaffected by any of this', function () {
   }
   if (fails.length) return fails.length + ' failed, first -> ' + fails[0];
   return D.net.mode === 'solo' || 'solo play left the net mode as ' + D.net.mode;
+});
+
+
+/* ---------- BUILD 15: RELAY TRANSPORT ---------- */
+t('R151 messages travel host -> relay -> client', function () {
+  KV.reset();
+  /* act as the host: open a room and send a snapshot */
+  resetInput(); D.start('RLY-01'); pump(4); resetInput();
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  var room = D.relay.room;
+  D.setNetMode('host');
+  D.setKey('N0'); D.setKey('N1');
+  var ck0 = global.CW.relayKey(room, 'c');
+  for (var f = 0; f < 900; f++) {
+    /* a real crewmate heartbeats, so simulate one or the host drops the link */
+    if (f % 30 === 0) { KV.lists[ck0] = KV.lists[ck0] || []; KV.lists[ck0].push(JSON.stringify(['HELLO', 'client'])); }
+    D.give('hp', 100); D.give('invuln', 9999); pump(1);
+  }
+  var hostEnemies = D.enemies.length;
+  if (hostEnemies < 2) return 'no enemies to replicate';
+  for (var f2 = 0; f2 < 40; f2++) pump(1);         /* let the relay flush */
+  var hostKey = global.CW.relayKey(room, 'h');
+  if (!KV.lists[hostKey] || !KV.lists[hostKey].length) return 'nothing was written to the relay';
+
+  /* now act as the client on the same room and drain the host list */
+  var written = KV.lists[hostKey].slice();
+  resetInput(); D.start('RLY-01'); pump(4); resetInput();
+  getEl('roomIn').value = room;
+  getEl('btnCoopJoin').fire('click', { preventDefault: function () {} });
+  D.setNetMode('client');
+  for (var i = 0; i < written.length; i++) {
+    var m;
+    try { m = JSON.parse(written[i]); } catch (e) { continue; }
+    D.relayReceive(m);
+  }
+  pump(2);
+  var got = D.enemies.length;
+  console.log('         [relay] ' + written.length + ' messages relayed, client mirrored ' + got + '/' + hostEnemies + ' enemies');
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  return got === hostEnemies || 'client mirrored ' + got + ' of ' + hostEnemies;
+});
+
+t('R152 each side reads only the other side\'s messages', function () {
+  KV.reset();
+  resetInput(); D.start('RLY-02'); pump(4); resetInput();
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  var room = D.relay.room;
+  D.setNetMode('host');
+  for (var f = 0; f < 120; f++) { D.give('invuln', 9999); pump(1); }
+  var mine = global.CW.relayKey(room, 'h'), theirs = global.CW.relayKey(room, 'c');
+  if (!KV.lists[mine] || !KV.lists[mine].length) return 'the host wrote nothing';
+  if (KV.lists[theirs] && KV.lists[theirs].length) return 'the host wrote to the client list';
+  /* and it must not have echoed its own traffic back into the game */
+  if (Object.keys(D.net.peers).length) return 'the host saw itself as a peer';
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  return true;
+});
+
+t('R153 the read cursor advances so messages are not reprocessed', function () {
+  KV.reset();
+  resetInput(); D.start('RLY-03'); pump(4); resetInput();
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  var room = D.relay.room;
+  /* plant three client messages */
+  var ck = global.CW.relayKey(room, 'c');
+  KV.lists[ck] = [
+    JSON.stringify(global.CW.encAvatar({ x: 1, z: 1, yaw: 0, pitch: 0, wep: 0, hp: 100 })),
+    JSON.stringify(global.CW.encAvatar({ x: 2, z: 2, yaw: 0, pitch: 0, wep: 0, hp: 100 })),
+    JSON.stringify(global.CW.encAvatar({ x: 3, z: 3, yaw: 0, pitch: 0, wep: 0, hp: 100 }))
+  ];
+  for (var f = 0; f < 20; f++) pump(1);
+  if (D.relay.cursor < 3) return 'cursor only reached ' + D.relay.cursor + ' after 3 messages';
+  var c0 = D.relay.cursor;
+  for (var f2 = 0; f2 < 40; f2++) pump(1);
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  return D.relay.cursor === c0 || 'cursor moved with no new messages (' + c0 + ' -> ' + D.relay.cursor + ')';
+});
+
+t('R154 relay request volume stays modest', function () {
+  KV.reset();
+  resetInput(); D.start('RLY-04'); pump(4); resetInput();
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  D.setNetMode('host');
+  var before = KV.requests;
+  for (var f = 0; f < 300; f++) { D.give('invuln', 9999); pump(1); }   /* 10 seconds */
+  var reqs = KV.requests - before;
+  var perSec = reqs / 10;
+  console.log('         [relay] ' + perSec.toFixed(1) + ' requests/s per player while active');
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  if (perSec > 9) return perSec.toFixed(1) + ' requests/s is too much quota';
+  return perSec > 1 || 'the relay is not polling at all (' + perSec.toFixed(1) + '/s)';
+});
+
+t('R155 a relay outage is reported and does not crash the game', function () {
+  KV.reset();
+  resetInput(); D.start('RLY-05'); pump(4); resetInput();
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  KV.fail = true;
+  for (var f = 0; f < 400; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  var st = getEl('coopStatus').textContent || '';
+  if (D.relay.fails < 3) return 'failures were not counted (' + D.relay.fails + ')';
+  if (st.indexOf('RELAY') < 0) return 'no outage message shown: "' + st + '"';
+  /* the game itself must keep running */
+  var p0 = { x: D.player.pos.x, z: D.player.pos.z };
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  for (var f2 = 0; f2 < 60; f2++) pump(1);
+  global.window.fire('keyup', { code: 'KeyW', preventDefault: function () {} });
+  KV.fail = false;
+  var moved = Math.hypot(D.player.pos.x - p0.x, D.player.pos.z - p0.z);
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  return moved > 0.5 || 'the game froze during a relay outage';
+});
+
+t('R156 the lobby falls back to the relay when no peer connection forms', function () {
+  KV.reset();
+  resetInput(); D.start('RLY-06'); pump(4); resetInput();
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  /* a peer appears in the room but the data channel never opens */
+  D.relay.lobby.peerSeen = true;
+  var guard = 0;
+  while (D.relay.lobby.state !== 'CONNECTED' && guard++ < 900) { D.give('invuln', 9999); pump(1); }
+  if (D.relay.lobby.state !== 'CONNECTED') return 'the lobby never connected';
+  if (D.relay.via !== 'relay') return 'connected via ' + D.relay.via + ' instead of the relay';
+  var st = getEl('coopStatus').textContent || '';
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  return st.indexOf('RELAY') >= 0 || 'the player was not told it is a relay link';
+});
+
+t('R157 leaving a room restores solo play cleanly', function () {
+  KV.reset();
+  resetInput(); D.start('RLY-07'); pump(4); resetInput();
+  getEl('btnCoopHost').fire('click', { preventDefault: function () {} });
+  D.setNetMode('host');
+  D.netHandle(global.CW.encAvatar({ x: 4, z: 4, yaw: 0, pitch: 0, wep: 0, hp: 100 }));
+  pump(4);
+  if (!Object.keys(D.net.peers).length) return 'no peer to clean up';
+  getEl('btnCoopLeave').fire('click', { preventDefault: function () {} });
+  pump(4);
+  if (D.net.mode !== 'solo') return 'mode is ' + D.net.mode + ' after leaving';
+  if (D.relay.room) return 'still in a room after leaving';
+  if (Object.keys(D.net.peers).length) return 'peer avatars were left in the world';
+  var before = KV.requests;
+  for (var f = 0; f < 200; f++) pump(1);
+  return KV.requests === before || 'it kept polling after leaving';
+});
+
+t('R158 no Upstash credentials are baked into the page', function () {
+  /* a token in client HTML is public — the proxy path exists so it never is */
+  if (/upstash\.io/.test(HTML) && /Bearer\s+[A-Za-z0-9_\-]{20,}/.test(HTML)) {
+    return 'a credential-looking string is embedded in the page';
+  }
+  if (!/\/api\/relay/.test(HTML)) return 'no same-origin proxy path configured';
+  return true;
 });
 
 console.log('\n' + log.join('\n'));
