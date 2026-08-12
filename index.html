@@ -39,13 +39,13 @@ canvas{display:block;position:fixed;inset:0}
 #cross.hostile i{background:#ff6a4a}
 #cross b{position:absolute;left:12px;top:12px;width:2px;height:2px;background:#bfe6ff;border-radius:50%}
 
-#weps{position:absolute;bottom:calc(14px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;gap:6px}
-.wep{pointer-events:auto;min-width:58px;padding:6px 9px;background:rgba(8,15,22,.84);border:1px solid #1f2c39;font-size:9px;letter-spacing:.1em;text-align:center;color:#7f9db4;border-radius:3px}
+#weps{position:absolute;bottom:calc(14px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);display:flex;gap:6px;z-index:6}
+.wep{pointer-events:auto;min-width:62px;padding:9px 11px;background:rgba(8,15,22,.84);border:1px solid #1f2c39;font-size:9px;letter-spacing:.1em;text-align:center;color:#7f9db4;border-radius:3px}
 .wep.sel{border-color:#6fd7ff;color:#cfeeff;box-shadow:0 0 12px rgba(80,190,255,.25)}
 .wep .amt{display:block;font-size:8px;color:#ffd08a;margin-top:2px}
 
-#chg{position:absolute;bottom:calc(66px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:150px;height:5px;background:#0b131c;border:1px solid #1f2c39;display:none}
-#field{position:absolute;bottom:calc(96px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:190px;display:none;text-align:center}
+#chg{position:absolute;bottom:calc(76px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:150px;height:5px;background:#0b131c;border:1px solid #1f2c39;display:none;z-index:5}
+#field{position:absolute;bottom:calc(106px + env(safe-area-inset-bottom));left:50%;transform:translateX(-50%);width:190px;display:none;text-align:center;z-index:5}
 #fieldBar{height:6px;background:#0b131c;border:1px solid #3a5f22}
 #fieldF{height:100%;width:0;background:linear-gradient(90deg,#7dffa0,#d8ffb0);box-shadow:0 0 10px #7dffa0}
 #fieldT{font-size:8px;letter-spacing:.18em;color:#9fd88a;margin-top:4px}
@@ -57,13 +57,18 @@ body.touch #fieldBtn{display:block}
 .wep.ready .amt{color:#c9a7ff}
 #chgF{height:100%;width:0;background:linear-gradient(90deg,#7a5cff,#c9a7ff);box-shadow:0 0 10px #9b7cff}
 
-#lookZone{position:absolute;inset:0;pointer-events:none}
+/* HUD stacking. The look zone is a full-screen touch catcher, so EVERY
+   interactive control must sit above it or its taps get swallowed. That is
+   exactly what broke the weapon buttons. */
+#lookZone{position:absolute;inset:0;pointer-events:none;z-index:1}
 body.touch #lookZone{pointer-events:auto}
 .stick{position:absolute;bottom:calc(24px + env(safe-area-inset-bottom));left:calc(18px + env(safe-area-inset-left));width:116px;height:116px;border-radius:50%;border:1px solid rgba(90,140,175,.18);background:rgba(8,18,26,.26);pointer-events:auto;display:none;z-index:3}
 .stick>i{position:absolute;left:50%;top:50%;width:46px;height:46px;margin:-23px 0 0 -23px;border-radius:50%;background:rgba(120,190,230,.22);border:1px solid rgba(150,215,255,.4)}
 #fireBtn{position:absolute;right:calc(22px + env(safe-area-inset-right));bottom:calc(84px + env(safe-area-inset-bottom));width:84px;height:84px;border-radius:50%;border:1px solid rgba(150,90,70,.5);background:rgba(48,16,12,.42);pointer-events:auto;display:none;z-index:3;font-size:9px;letter-spacing:.14em;color:#ffb8a0;text-align:center;line-height:84px}
 #fireBtn:active{background:rgba(120,40,28,.6)}
 body.touch .stick,body.touch #fireBtn{display:block}
+body.touch .wep{min-width:74px;padding:13px 12px;font-size:10px}
+body.touch #weps{gap:9px;bottom:calc(18px + env(safe-area-inset-bottom))}
 
 #viewBtn{position:absolute;right:calc(12px + env(safe-area-inset-right));bottom:calc(198px + env(safe-area-inset-bottom));padding:7px 11px;background:rgba(8,15,22,.84);border:1px solid #1f2c39;font-size:9px;letter-spacing:.1em;color:#7f9db4;pointer-events:auto;border-radius:3px;z-index:4}
 #muteBtn{position:absolute;right:calc(12px + env(safe-area-inset-right));bottom:calc(228px + env(safe-area-inset-bottom));padding:7px 11px;background:rgba(8,15,22,.84);border:1px solid #1f2c39;font-size:9px;letter-spacing:.1em;color:#7f9db4;pointer-events:auto;border-radius:3px;z-index:4}
@@ -95,6 +100,29 @@ body.xr #hud{display:none}
 #flash{position:fixed;inset:0;background:radial-gradient(ellipse at center,transparent 40%,rgba(255,40,30,.55) 100%);opacity:0;pointer-events:none;z-index:11;transition:opacity .22s}
 #vig{position:fixed;inset:0;background:radial-gradient(ellipse at center,transparent 52%,rgba(0,0,0,.6) 100%);pointer-events:none;z-index:9}
 
+#intro{position:fixed;inset:0;z-index:20;display:none;flex-direction:column;align-items:center;justify-content:center;padding:30px;text-align:center;background:linear-gradient(180deg,rgba(3,6,10,.94) 0%,rgba(3,6,10,.86) 55%,rgba(3,6,10,.94) 100%);pointer-events:auto}
+#introShip{font-size:9px;letter-spacing:.42em;color:#4f7690;margin-bottom:6px}
+#introTitle{font-size:clamp(20px,5.5vw,34px);letter-spacing:.3em;color:#dff0ff;font-weight:400;margin-bottom:26px;text-shadow:0 0 22px rgba(90,190,255,.35)}
+#introBody{max-width:560px;font-size:clamp(11px,2.6vw,13px);line-height:2;color:#a9c6da;letter-spacing:.03em}
+#introBody p{opacity:0;transform:translateY(6px);transition:opacity .9s ease,transform .9s ease;margin-bottom:16px}
+#introBody p.on{opacity:1;transform:none}
+#introBody em{color:#9fe8ff;font-style:normal;letter-spacing:.14em}
+#introBody .hot{color:#b6ff9e}
+#introBody .warn{color:#ff9d6b}
+#introOrders{margin-top:8px;font-size:clamp(11px,2.7vw,13px);letter-spacing:.2em;color:#dff0ff;opacity:0;transition:opacity 1s ease;line-height:2.1}
+#introOrders.on{opacity:1}
+#introSkip{margin-top:30px;font-size:9px;letter-spacing:.26em;color:#3f6a84;opacity:0;transition:opacity .6s}
+#introSkip.on{opacity:1}
+#revive{position:absolute;left:50%;transform:translateX(-50%);top:42%;width:min(300px,74vw);display:none;text-align:center;z-index:7}
+#reviveBar{height:7px;background:#1a0d0d;border:1px solid #6a2a22}
+#reviveF{height:100%;width:0;background:linear-gradient(90deg,#ff5a4a,#ffd08a);box-shadow:0 0 10px #ff6a4a}
+#reviveT{font-size:9px;letter-spacing:.18em;color:#ffb8a0;margin-top:6px}
+#coop{margin-top:14px;width:min(460px,90vw);text-align:left;display:none}
+#coop textarea{width:100%;height:52px;background:#060d14;border:1px solid #253c4d;color:#9fe8ff;font-family:inherit;font-size:9px;letter-spacing:.04em;padding:7px;border-radius:3px;resize:none}
+#coop label{display:block;font-size:8px;letter-spacing:.22em;color:#4f7690;margin:9px 0 4px}
+#coopStatus{font-size:9px;letter-spacing:.14em;color:#6f93ab;margin-top:8px;min-height:12px;text-align:center}
+#coopSteps{font-size:9px;letter-spacing:.1em;color:#4f7690;line-height:1.9;margin-top:10px}
+#coopSteps b{color:#9fc4dc;font-weight:400}
 #toast{position:absolute;left:50%;transform:translateX(-50%);top:64%;font-size:11px;letter-spacing:.09em;color:#dff0ff;background:rgba(6,12,18,.86);border-left:2px solid #6fd7ff;padding:7px 13px;opacity:0;transition:opacity .3s;max-width:82vw;text-align:center}
 
 .screen{position:fixed;inset:0;background:#03060a;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:26px;text-align:center}
@@ -150,21 +178,54 @@ body.xr #hud{display:none}
   <div id="viewBtn">1ST / 3RD</div>
   <div id="muteBtn">SOUND: ON</div>
   <div id="vrBtn">ENTER VR</div>
+  <div id="revive"><div id="reviveBar"><div id="reviveF"></div></div><div id="reviveT"></div></div>
   <div id="toast"></div>
 </div>
 <div id="flash"></div>
 
+<div id="intro">
+  <div id="introShip"></div>
+  <h2 id="introTitle">COLDWAKE</h2>
+  <div id="introBody">
+    <p>You wake in a failed cryopod aboard the colony transport <em>COLDWAKE</em>, drifting dark. The crew is gone.</p>
+    <p>Something is nesting in the ship.</p>
+    <p>Three critical components have been dragged into the nests of three hive matriarchs, and the only thing that penetrates their carapace is a charge rifle powered by <span class="hot">Voidglass</span> — unstable crystal that only grows in the ship's breached sectors, and that the hive <span class="warn">can smell from three decks away</span>.</p>
+  </div>
+  <div id="introOrders">RESTORE THE REACTOR.<br>RESTORE THE DRIVE.<br>RESTORE NAVIGATION.<br>BURN FOR EARTH.</div>
+  <div id="introSkip">PRESS ANY KEY OR TAP TO BEGIN</div>
+</div>
+
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 11</div>
-  <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
+  <div class="sub">VERTICAL SLICE · BUILD 14</div>
+  <p>You wake in a failed cryopod aboard the colony transport <em style="color:#9fe8ff;font-style:normal;letter-spacing:.12em">COLDWAKE</em>, drifting dark. The crew is gone. Something is nesting in the ship.</p>
+  <p style="font-size:11px;letter-spacing:.16em;color:#6f93ab">RESTORE THE REACTOR · RESTORE THE DRIVE · RESTORE NAVIGATION · BURN FOR EARTH</p>
   <p style="font-size:10px;color:#5f7f96;margin-bottom:14px">HEADPHONES RECOMMENDED — THE SCORE REACTS TO WHAT IS HUNTING YOU</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
   <div>
     <button class="btn" id="btnStart">BOARD SHIP</button>
     <button class="btn ghost" id="btnRand">RANDOM SHIP</button>
   </div>
-  <div><button class="btn ghost" id="btnTut">TUTORIAL: ON</button></div>
+  <div>
+    <button class="btn ghost" id="btnTut">TUTORIAL: ON</button>
+    <button class="btn ghost" id="btnCoop">CO-OP</button>
+  </div>
+  <div id="coop">
+    <div id="coopSteps">
+      <b>HOST:</b> press CREATE INVITE, send the code to your friend, paste their reply, press CONNECT.<br>
+      <b>JOIN:</b> paste your friend's invite, press JOIN, send the reply code back to them.
+    </div>
+    <label>PASTE A CODE FROM YOUR FRIEND</label>
+    <textarea id="coopIn" placeholder="CW3:…" spellcheck="false"></textarea>
+    <label>YOUR CODE — SEND THIS TO THEM</label>
+    <textarea id="coopOut" readonly placeholder="your code appears here"></textarea>
+    <div style="text-align:center;margin-top:10px">
+      <button class="btn ghost" id="btnCoopHost">CREATE INVITE</button>
+      <button class="btn ghost" id="btnCoopJoin">JOIN</button>
+      <button class="btn ghost" id="btnCoopAccept">CONNECT</button>
+    </div>
+    <div id="coopStatus"></div>
+  </div>
   <div class="hint">
     EVERY SHIP CODE GENERATES A DIFFERENT VESSEL<br>
     DESKTOP — CLICK TO LOCK MOUSE · WASD MOVE · MOUSE LOOK · LMB FIRE · RMB CHARGE RIFLE<br>
@@ -804,6 +865,125 @@ CW.fieldChargeStep = function (fc, dt, ctx) {
   out.progress = Math.min(1, fc.t / CW.CFG.FIELD_CHARGE);
   if (fc.t >= CW.CFG.FIELD_CHARGE) { fc.t = 0; fc.active = false; out.done = true; out.progress = 1; }
   return out;
+};
+
+/* ---------- NETCODE ----------
+   Authority split: the host owns the world (enemies, boss, waves, pickups,
+   repair nodes); each peer owns its own avatar. Between friends there is no
+   cheating concern, and peer-owned avatars remove an entire class of
+   prediction and reconciliation bugs. */
+
+CW.NET_VERSION = 3;
+CW.NET_SNAPSHOT_HZ = 14;
+CW.NET_AVATAR_HZ = 20;
+
+CW.b64enc = function (str) {
+  if (typeof btoa === 'function') return btoa(unescape(encodeURIComponent(str)));
+  return Buffer.from(str, 'utf8').toString('base64');
+};
+CW.b64dec = function (b) {
+  if (typeof atob === 'function') return decodeURIComponent(escape(atob(b)));
+  return Buffer.from(b, 'base64').toString('utf8');
+};
+
+/* handshake blobs are long; wrap them so they survive copy-paste */
+CW.packSignal = function (obj) {
+  return 'CW' + CW.NET_VERSION + ':' + CW.b64enc(JSON.stringify(obj));
+};
+CW.unpackSignal = function (txt) {
+  if (!txt) return null;
+  var t = String(txt).replace(/\s+/g, '');
+  var m = t.match(/^CW(\d+):(.+)$/);
+  if (!m) return null;
+  if (parseInt(m[1], 10) !== CW.NET_VERSION) return { error: 'version', got: parseInt(m[1], 10) };
+  try {
+    var obj = JSON.parse(CW.b64dec(m[2]));
+    if (!obj || typeof obj !== 'object') return { error: 'corrupt' };
+    return obj;
+  } catch (e) { return { error: 'corrupt' }; }
+};
+
+/* ---- avatar (peer -> everyone) ---- */
+CW.encAvatar = function (a) {
+  return ['A', Math.round(a.x * 100) / 100, Math.round(a.z * 100) / 100,
+    Math.round(a.yaw * 1000) / 1000, Math.round(a.pitch * 1000) / 1000,
+    a.wep | 0, Math.max(0, Math.round(a.hp)), a.moving ? 1 : 0, a.down ? 1 : 0,
+    Math.round((a.charges || 0)), a.name || ''];
+};
+CW.decAvatar = function (m) {
+  if (!m || m[0] !== 'A') return null;
+  return { x: m[1], z: m[2], yaw: m[3], pitch: m[4], wep: m[5], hp: m[6],
+    moving: !!m[7], down: !!m[8], charges: m[9], name: m[10] };
+};
+
+/* ---- world snapshot (host -> clients) ---- */
+CW.encSnapshot = function (w) {
+  var en = [];
+  for (var i = 0; i < w.enemies.length; i++) {
+    var e = w.enemies[i];
+    en.push([e.id, e.kindIdx, Math.round(e.x * 50) / 50, Math.round(e.z * 50) / 50,
+      Math.round(e.yaw * 100) / 100, e.wind > 0 ? 1 : 0]);
+  }
+  return ['S', w.tick | 0, en,
+    [w.bossState | 0, w.bossArmor | 0, Math.round(w.bossArena || 0)],
+    w.nodes || [], w.taken || [], w.phase | 0,
+    [w.waveState | 0, w.wave | 0], w.alert | 0];
+};
+CW.decSnapshot = function (m) {
+  if (!m || m[0] !== 'S') return null;
+  var en = [];
+  for (var i = 0; i < m[2].length; i++) {
+    var e = m[2][i];
+    en.push({ id: e[0], kindIdx: e[1], x: e[2], z: e[3], yaw: e[4], wind: e[5] });
+  }
+  return {
+    tick: m[1], enemies: en,
+    bossState: m[3][0], bossArmor: m[3][1], bossArena: m[3][2],
+    nodes: m[4], taken: m[5], phase: m[6],
+    waveState: m[7][0], wave: m[7][1], alert: m[8]
+  };
+};
+
+/* ---- reconcile a decoded snapshot against local mirrors ----
+   hooks: {spawn(id,kindIdx,x,z), update(rec,e), remove(id)} */
+CW.applySnapshot = function (mirror, snap, hooks) {
+  var seen = {}, spawned = 0, removed = 0;
+  for (var i = 0; i < snap.enemies.length; i++) {
+    var e = snap.enemies[i];
+    seen[e.id] = 1;
+    var rec = mirror[e.id];
+    if (!rec) { rec = hooks.spawn(e.id, e.kindIdx, e.x, e.z); if (!rec) continue; mirror[e.id] = rec; spawned++; }
+    hooks.update(rec, e);
+  }
+  for (var id in mirror) {
+    if (seen[id]) continue;
+    hooks.remove(mirror[id], id);
+    delete mirror[id];
+    removed++;
+  }
+  return { spawned: spawned, removed: removed, alive: snap.enemies.length };
+};
+
+/* ---- action requests (client -> host) ---- */
+CW.encAction = function (kind, a, b, c) { return ['X', kind, a === undefined ? 0 : a, b === undefined ? 0 : b, c === undefined ? 0 : c]; };
+CW.decAction = function (m) {
+  if (!m || m[0] !== 'X') return null;
+  return { kind: m[1], a: m[2], b: m[3], c: m[4] };
+};
+
+/* shared revive rule: a downed player is brought back by a teammate standing
+   close for a sustained period */
+CW.REVIVE_TIME = 3.5;
+CW.REVIVE_RANGE = 2.6;
+CW.DOWN_BLEED = 45;          /* seconds before a downed player is lost */
+CW.reviveStep = function (st, dt, ctx) {
+  ctx = ctx || {};
+  if (!ctx.down) { st.t = 0; return { done: false, progress: 0 }; }
+  st.bleed = (st.bleed || 0) + dt;
+  if (!ctx.helperNear) { st.t = Math.max(0, st.t - dt * 1.5); return { done: false, progress: st.t / CW.REVIVE_TIME, bleed: st.bleed }; }
+  st.t += dt;
+  if (st.t >= CW.REVIVE_TIME) { st.t = 0; st.bleed = 0; return { done: true, progress: 1 }; }
+  return { done: false, progress: st.t / CW.REVIVE_TIME, bleed: st.bleed };
 };
 
 CW.BOSS_STATES = ['DORMANT', 'AGGRESSIVE', 'ARMORED', 'VENT', 'STAGGER', 'DEAD', 'FLED'];
@@ -2820,10 +3000,11 @@ function limb(len, rTop, rBot, mat, outline) {
   return g;
 }
 
-function buildPlayer(R) {
-  var suit = toon(0xd9e2ea, 0x2c3d4c, 0.35);       /* white EVA suit */
-  var suitDark = toon(0x4a5a68, 0x141c24, 0.5);    /* joints and soft goods */
-  var accent = toon(0xff8a3d, 0x3a1c08, 0.5);      /* hazard orange trim */
+/* one astronaut rig, reused for the local player and every remote teammate */
+function makeAstronaut(suitCol, accentCol) {
+  var suit = toon(suitCol, 0x2c3d4c, 0.35);
+  var suitDark = toon(0x4a5a68, 0x141c24, 0.5);
+  var accent = toon(accentCol, 0x3a1c08, 0.5);
   var metal = MAT.bolt;
 
   var g = new THREE.Group();
@@ -2930,6 +3111,18 @@ function buildPlayer(R) {
     legs.push({ hip: hip, thigh: thigh, knee: knee, shin: shin, boot: boot, side: lside });
   }
 
+  return {
+    g: g, root: root, chest: chest, neck: neck, arms: arms, legs: legs,
+    heldGun: heldGun, visorGlow: visorGlow
+  };
+}
+
+function buildPlayer(R) {
+  var rig = makeAstronaut(0xd9e2ea, 0xff8a3d);
+  var g = rig.g;
+  var metal = MAT.bolt;
+  var suitDark = toon(0x4a5a68, 0x141c24, 0.5);
+
   /* --- first-person viewmodel (leaked on restart before this) --- */
   if (viewGun && viewGun.parent) viewGun.parent.remove(viewGun);
   if (headLamp) {
@@ -2961,18 +3154,15 @@ function buildPlayer(R) {
   world.add(g);
 
   player = {
-    g: g, root: root, chest: chest, neck: neck, arms: arms, legs: legs,
-    heldGun: heldGun, visorGlow: visorGlow,
+    g: g, root: rig.root, chest: rig.chest, neck: rig.neck, arms: rig.arms, legs: rig.legs,
+    heldGun: rig.heldGun, visorGlow: rig.visorGlow,
     pos: { x: spawn.x, z: spawn.z }, fwd: { x: 0, y: 0, z: -1 }
   };
 }
 
 /* full walk cycle plus aim pose, driven from the movement state */
-function animatePlayer(dt, moving, speed) {
-  var P = player;
+function animateRigBody(P, t, amp, pitch, kick) {
   if (!P || !P.legs) return;
-  var t = S.bob;
-  var amp = moving ? Math.min(1, speed / SPEED) : 0;
 
   for (var i = 0; i < P.legs.length; i++) {
     var L = P.legs[i], ph = t + (i ? Math.PI : 0);
@@ -2999,13 +3189,14 @@ function animatePlayer(dt, moving, speed) {
   }
   /* torso counter-rotates against the stride, and pitches with aim */
   P.chest.rotation.y = -Math.sin(t) * 0.08 * amp;
-  P.chest.rotation.x = -S.pitch * 0.28;
-  P.neck.rotation.x = -S.pitch * 0.55;
+  P.chest.rotation.x = -pitch * 0.28 - (kick || 0) * 0.6;
+  P.neck.rotation.x = -pitch * 0.55;
   P.root.position.y = Math.abs(Math.sin(t)) * 0.055 * amp;
   P.root.rotation.z = Math.sin(t) * 0.025 * amp;
-  /* recoil kicks the whole upper body */
-  P.chest.rotation.x -= S.kick * 0.6;
   P.visorGlow.material.opacity = 0.26 + Math.sin(performance.now() / 900) * 0.06;
+}
+function animatePlayer(dt, moving, speed) {
+  animateRigBody(player, S.bob, moving ? Math.min(1, speed / SPEED) : 0, S.pitch, S.kick);
 }
 
 /* ================= ENEMIES ================= */
@@ -3294,11 +3485,14 @@ function hitscan(dmg, spreadDeg) {
     o.x + dx * bestT, o.y + dy * bestT, o.z + dz * bestT);
   if (bestE >= 0) {
     var E = enemies[bestE];
-    E.hp -= dmg; E.flash = 0.12; SFX.hit(E.pos.x, E.pos.z);
+    if (netIsClient() && E.remote) { netSend(CW.encAction('hit', E.netId, dmg)); E.flash = 0.12; }
+    else E.hp -= dmg;
+    E.flash = 0.12; SFX.hit(E.pos.x, E.pos.z);
     burst(E.pos.x, E.T.hy, E.pos.z, 0xffaa66);
     if (E.hp <= 0) killEnemy(E, bestE);
   } else if (bestE === -2) {
-    boss._dmg = (boss._dmg || 0) + dmg;
+    if (netIsClient()) netSend(CW.encAction('boss', 0, dmg));
+    else boss._dmg = (boss._dmg || 0) + dmg;
     burst(bossMesh.x + (Math.random() - .5) * 4, 3, bossMesh.z + (Math.random() - .5) * 4, 0xff8866);
     SFX.hit(bossMesh.x, bossMesh.z);
   } else if (bestE === -3) {
@@ -3335,7 +3529,10 @@ function fireBeam() {
   if (boss && bossMesh && boss.state !== 'DEAD') {
     var bt = raySphere(o.x, o.y, o.z, f.x, f.y, f.z, bossMesh.x, 2.8, bossMesh.z, bossMesh.r * 1.15);
     if (bt >= 0 && bt < wallT) {
-      if (boss.state === 'VENT') { boss._charged = true; SFX.vent(); toast('ARMOUR PLATE BREACHED'); }
+      if (boss.state === 'VENT') {
+        if (netIsClient()) netSend(CW.encAction('boss', 1, 0)); else boss._charged = true;
+        SFX.vent(); toast('ARMOUR PLATE BREACHED');
+      }
       else toast('CARAPACE HELD — HIT IT DURING THE VENT');
     }
   }
@@ -3359,7 +3556,19 @@ function hurtPlayer(dmg, sx, sz) {
     while (rel < -Math.PI) rel += Math.PI * 2;
     showDamageDir(rel);
   }
-  if (S.hp <= 0) { S.hp = 0; endGame(false, 'HULL BREACH', 'Your suit failed in the dark. The ship keeps drifting.'); }
+  if (S.hp <= 0) {
+    S.hp = 0;
+    if (netActive() && !S.down) {
+      /* in co-op you go down rather than out, so a crewmate can reach you */
+      S.down = true;
+      if (!S.reviveSt) S.reviveSt = { t: 0, bleed: 0 };
+      S.reviveSt.bleed = 0;
+      toast('YOU ARE DOWN — HOLD ON');
+      SFX.die();
+      return;
+    }
+    if (!S.down) endGame(false, 'HULL BREACH', 'Your suit failed in the dark. The ship keeps drifting.');
+  }
 }
 function showDamageDir(rel) {
   var el = null;
@@ -3396,6 +3605,7 @@ var SENS_M = 0.0022, SENS_T = 0.0052;
 
 function initInput() {
   window.addEventListener('keydown', function (e) {
+    if (intro.on) { endIntro(); }
     keys[e.code] = true;
     if (e.code === 'Digit1') setWep(0);
     if (e.code === 'Digit2') setWep(1);
@@ -3410,6 +3620,7 @@ function initInput() {
   var cv = $('cv');
   cv.addEventListener('mousedown', function (e) {
     audioInit();
+    if (intro.on) { endIntro(); return; }
     if (!isTouch && !locked && running) { if (cv.requestPointerLock) cv.requestPointerLock(); return; }
     if (e.button === 0) firing = true;
     if (e.button === 2) { charging = true; setWep(2); }
@@ -3432,25 +3643,47 @@ function initInput() {
 
   var ws = document.querySelectorAll('.wep');
   for (var i = 0; i < ws.length; i++) {
-    (function (el) {
-      el.addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); setWep(parseInt(el.dataset.w, 10)); });
-    })(ws[i]);
+    (function (el, idx) {
+      function pick(e) {
+        if (e && e.preventDefault) e.preventDefault();
+        if (e && e.stopPropagation) e.stopPropagation();
+        audioInit();
+        var w = parseInt(el.dataset.w, 10);
+        setWep(isNaN(w) ? idx : w);
+      }
+      /* pointerdown for responsiveness, click as a fallback for browsers that
+         swallow synthetic pointer events on the overlay */
+      el.addEventListener('pointerdown', pick);
+      el.addEventListener('click', pick);
+    })(ws[i], i);
   }
   $('act').addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); doInteract(); });
   $('viewBtn').addEventListener('pointerdown', function (e) { e.preventDefault(); toggleView(); });
   $('muteBtn').addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); toggleMute(); });
   $('vrBtn').addEventListener('click', function (e) { e.preventDefault(); enterVR(); });
+  $('intro').addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); endIntro(); });
+  $('btnCoop').addEventListener('click', function () {
+    var el = $('coop');
+    var open = el.style.display !== 'block';
+    el.style.display = open ? 'block' : 'none';
+    $('btnCoop').textContent = open ? 'CO-OP: OPEN' : 'CO-OP';
+  });
+  $('btnCoopHost').addEventListener('click', function () { audioInit(); coopHost(); });
+  $('btnCoopJoin').addEventListener('click', function () { audioInit(); coopJoin(); });
+  $('btnCoopAccept').addEventListener('click', function () { audioInit(); coopAccept(); });
   var fb = $('fieldBtn');
   fb.addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); S.fieldBtn = true; });
   fb.addEventListener('pointerup', function (e) { e.preventDefault(); S.fieldBtn = false; });
   fb.addEventListener('pointercancel', function () { S.fieldBtn = false; });
 
-  if (isTouch) {
-    document.body.classList.add('touch');
-    bindStick();
-    bindLook();
-    bindFire();
-  }
+  /* Bind touch controls unconditionally. The elements are display:none and
+     pointer-events:none off touch, so this is inert on desktop — but it means
+     hybrid devices (touchscreen laptops, the Quest browser) get both input
+     paths, and it stops the touch path from being untestable. */
+  bindStick();
+  bindLook();
+  bindFire();
+  if (isTouch) document.body.classList.add('touch');
 }
 function clampPitch() {
   var lim = Math.PI / 2 - 0.08;
@@ -3479,6 +3712,9 @@ function bindStick() {
 function bindLook() {
   var el = $('lookZone');
   el.addEventListener('pointerdown', function (e) {
+    /* belt and braces alongside the z-index fix: never start a look drag from a
+       touch that landed on a HUD control */
+    if (e.target && e.target !== el) return;
     e.preventDefault(); audioInit();
     if (look.a) return;
     look.a = true; look.id = e.pointerId; look.lx = e.clientX; look.ly = e.clientY;
@@ -3518,6 +3754,7 @@ function setWep(w) {
       : 'RIFLE EMPTY — FIND VOIDGLASS');
   }
   S.wep = w; charging = false; S.charging = 0; firing = false;
+  blip(w === 2 ? 620 : 480, 0.05, 'sine', 0.06, w === 2 ? 900 : 700);
   var ws = document.querySelectorAll('.wep');
   for (var i = 0; i < ws.length; i++) ws[i].classList.toggle('sel', i === w);
   $('chg').style.display = w === 2 ? 'block' : 'none';
@@ -3581,6 +3818,7 @@ function doInteract() {
     S.keys[o.node.id] = true;
     o.core.material.color.setHex(0x7dffa0); o.col.material.emissive.setHex(0x2bff7a);
     SFX.repair(); openDoors();
+    if (netActive()) netSend(CW.encAction('node', nodeObjs.indexOf(o)));
     if (o.node.id === 'N0') toast('EMERGENCY LIGHTING RESTORED — BLAST DOORS RESPOND');
     if (o.node.id === 'N1') toast('ATMOSPHERE SCRUBBER ONLINE — O2 STABLE');
     if (o.node.id === 'N2') { S.powerT1 = true; SFX.power(); endGame(true); }
@@ -3588,6 +3826,7 @@ function doInteract() {
   }
   if (o.kind === 'crystal') {
     o.taken = true; o.g.visible = false;
+    if (netActive()) netSend(CW.encAction('take', pickups.indexOf(o)));
     S.crystals.push({ t: 0 }); S.hotEver = true;
     SFX.crystal();
     var was = S.alert; S.alert = CW.alertFromHot(hotCount());
@@ -3619,6 +3858,7 @@ function openDoors() {
 /* ================= SPAWNING ================= */
 function spawnTick(dt) {
   S.elapsed += dt;
+  if (netIsClient()) return;   /* the host owns spawning */
   var phase = CW.phaseFor({ N0: !!S.keys.N0, N1: !!S.keys.N1, hotEver: S.hotEver });
   if (phase !== S.phase) {
     var up = phase > S.phase;
@@ -3758,6 +3998,7 @@ function update(dt) {
   var ml = Math.hypot(mf, mr);
   if (ml > 1) { mf /= ml; mr /= ml; }
   var spd = (keys.ShiftLeft || keys.ShiftRight) ? SPRINT : SPEED;
+  if (S.down) { mf = 0; mr = 0; spd = 0; firing = false; charging = false; }
   var vx = (fx * mf + rx * mr) * spd, vz = (fz * mf + rz * mr) * spd;
   moveCircle(player.pos, vx * dt, vz * dt, PLR_R);
 
@@ -3833,6 +4074,24 @@ function update(dt) {
   /* --- enemies --- */
   for (var n = enemies.length - 1; n >= 0; n--) {
     var EN = enemies[n];
+    if (netIsClient() && EN.remote) {
+      /* the host owns these: interpolate toward the last snapshot instead of
+         running a second, divergent simulation */
+      if (EN.netTX !== undefined) {
+        EN.pos.x += (EN.netTX - EN.pos.x) * Math.min(1, dt * 12);
+        EN.pos.z += (EN.netTZ - EN.pos.z) * Math.min(1, dt * 12);
+      }
+      EN.gait += dt * EN.T.spd * EN.A.gait;
+      var rearC = EN.wind > 0 ? 0.6 : 0;
+      animateRig(EN, true, rearC);
+      EN.g.position.set(EN.pos.x, Math.abs(Math.sin(EN.gait)) * 0.045, EN.pos.z);
+      if (EN.netYaw !== undefined) EN.g.rotation.y = EN.netYaw;
+      /* local contact damage so the client still feels threatened */
+      var cd = Math.hypot(EN.pos.x - player.pos.x, EN.pos.z - player.pos.z);
+      EN.cd -= dt;
+      if (cd < EN.T.range && EN.cd <= 0) { EN.cd = EN.T.atk; hurtPlayer(EN.T.dmg, EN.pos.x, EN.pos.z); }
+      continue;
+    }
     EN.wob += dt * 11; EN.cd -= dt;
     if (EN.flash > 0) EN.flash -= dt;
     if (!EN.A) continue;
@@ -3950,6 +4209,7 @@ function update(dt) {
     }
     if (near) {
       K.taken = true; K.g.visible = false;
+      if (netActive()) netSend(CW.encAction('take', pk));
       if (K.kind === 'mesh') S.mesh++; else S.scrap++;
       SFX.pick();
     }
@@ -3978,7 +4238,8 @@ function update(dt) {
   S._px = player.pos.x; S._pz = player.pos.z;
   var lookDelta = Math.abs(S.yaw - (S._ly === undefined ? S.yaw : S._ly));
   S._ly = S.yaw;
-  updateTutorial(dt, movedDist, Math.min(lookDelta, 0.4));
+  if (!intro.on) updateTutorial(dt, movedDist, Math.min(lookDelta, 0.4));
+  else $('tut').style.display = 'none';
 
   /* fade the directional damage markers */
   for (var dm = 0; dm < dmgMarks.length; dm++) {
@@ -3987,6 +4248,9 @@ function update(dt) {
     if (M.d) M.d.style.opacity = String(Math.max(0, 1 - M.t / 1.1));
   }
 
+  introTick(dt);
+  netTick(dt);
+  reviveTick(dt);
   fieldChargeTick(dt);
   updateFlow(dt);
   updateExterior(dt);
@@ -4025,13 +4289,25 @@ function musicState() {
 /* ================= BOSS UPDATE ================= */
 function updateBoss(dt) {
   if (!boss || !bossMesh) return;
+  if (netIsClient()) { updateBossVisual(dt); return; }   /* host owns the FSM */
   var inArena = S.room === ship.reactorRoom;
   var was = boss.state;
   CW.bossStep(boss, dt, { playerInArena: inArena, chargedHit: !!boss._charged, dmg: boss._dmg || 0 });
   boss._charged = false; boss._dmg = 0;
 
   if (was === 'DORMANT' && boss.state === 'AGGRESSIVE') { SFX.boss(); toast('BROODMOTHER STIRS'); }
-  if (was !== 'VENT' && boss.state === 'VENT') SFX.vent();
+  if (was !== 'VENT' && boss.state === 'VENT') {
+    SFX.vent();
+    /* clear the floor so the shot can be lined up */
+    for (var ce = enemies.length - 1; ce >= 0; ce--) {
+      var EC = enemies[ce];
+      if (Math.hypot(EC.pos.x - bossMesh.x, EC.pos.z - bossMesh.z) < 30) {
+        for (var pz2 = 0; pz2 < 6; pz2++) burst(EC.pos.x, EC.T.hy, EC.pos.z, 0x9fd83a);
+        world.remove(EC.g); enemies.splice(ce, 1);
+      }
+    }
+    noise(0.5, 0.16, 700, 1.2);
+  }
   if (boss.state === 'FLED' && was !== 'FLED') {
     toast('ARENA ATMOSPHERE GONE — FALL BACK'); hurtPlayer(24);
     var R = ship.rooms[ship.reactorRoom];
@@ -4045,6 +4321,12 @@ function updateBoss(dt) {
     for (var i = 0; i < 28; i++) burst(bossMesh.x + (Math.random() - .5) * 7, 2 + Math.random() * 3, bossMesh.z + (Math.random() - .5) * 7, 0xff8a4a);
   }
 
+  updateBossVisual(dt);
+  if (!inArena || boss.state === 'DEAD' || boss.state === 'DORMANT') return;
+  runBossAttacks(dt);
+}
+function updateBossVisual(dt) {
+  if (!boss || !bossMesh) return;
   var venting = boss.state === 'VENT' || boss.state === 'STAGGER';
   var pulse = 0.5 + Math.sin(performance.now() / 90) * 0.5;
   for (var s = 0; s < bossMesh.sacs.length; s++) {
@@ -4053,8 +4335,8 @@ function updateBoss(dt) {
   }
   bossMesh.group.position.y = boss.state === 'STAGGER' ? -0.6 : Math.sin(performance.now() / 520) * 0.16;
   bossMesh.group.rotation.y += dt * (boss.state === 'AGGRESSIVE' ? 0.5 : 0.13);
-
-  if (!inArena || boss.state === 'DEAD' || boss.state === 'DORMANT') return;
+}
+function runBossAttacks(dt) {
   boss._atk = (boss._atk || 0) - dt;
   boss._add = (boss._add || 0) - dt;
   if (boss.state === 'AGGRESSIVE' && boss._atk <= 0) {
@@ -4085,17 +4367,7 @@ function updateBoss(dt) {
       spawnEnemy('skitter', v.x, v.z);
     }
   }
-  /* entering the vent window clears the floor so you can line up the shot */
-  if (was !== 'VENT' && boss.state === 'VENT') {
-    for (var ce = enemies.length - 1; ce >= 0; ce--) {
-      var EC = enemies[ce];
-      if (Math.hypot(EC.pos.x - bossMesh.x, EC.pos.z - bossMesh.z) < 30) {
-        for (var pz2 = 0; pz2 < 6; pz2++) burst(EC.pos.x, EC.T.hy, EC.pos.z, 0x9fd83a);
-        world.remove(EC.g); enemies.splice(ce, 1);
-      }
-    }
-    noise(0.5, 0.16, 700, 1.2);
-  }
+
 }
 
 /* ================= CAMERA ================= */
@@ -4326,6 +4598,411 @@ function enterVR() {
   });
 }
 
+/* ================= CO-OP =================
+   Copy-paste WebRTC: no signalling server, so this works on any static host.
+   Authority: the host simulates the world; every peer owns its own avatar. */
+var net = {
+  mode: 'solo',           /* solo | host | client */
+  pc: null, ch: null,
+  connected: false,
+  peers: {},              /* id -> remote avatar record */
+  mirror: {},             /* host enemy id -> local enemy record (client only) */
+  sendAcc: 0, snapAcc: 0,
+  nextId: 1,
+  myName: 'CREW',
+  lastRx: 0,
+  stats: { sent: 0, recv: 0, bytes: 0 }
+};
+var ENEMY_KINDS = ['skitter', 'clinger', 'bloater', 'stalker'];
+
+function netIsHost() { return net.mode === 'host'; }
+function netIsClient() { return net.mode === 'client'; }
+function netActive() { return net.mode !== 'solo' && net.connected; }
+
+function netSend(msg) {
+  if (!net.ch || net.ch.readyState !== 'open') return;
+  try {
+    var txt = JSON.stringify(msg);
+    net.ch.send(txt);
+    net.stats.sent++; net.stats.bytes += txt.length;
+  } catch (e) { /* channel closed mid-frame */ }
+}
+
+function netRTCConfig() {
+  return { iceServers: [{ urls: ['stun:stun.l.google.com:19302', 'stun:global.stun.twilio.com:3478'] }] };
+}
+
+/* gathers ICE fully before handing over a code, so one paste is enough */
+function withIce(pc) {
+  /* resolve immediately when gathering is already complete, so the handshake
+     does not depend on a real Promise implementation being pumped */
+  if (pc.iceGatheringState === 'complete') return { then: function (f) { var r = f(); return r && r.then ? r : { then: function (g) { g(r); return this; }, catch: function () { return this; } }; }, catch: function () { return this; } };
+  return new Promise(function (res) {
+    if (pc.iceGatheringState === 'complete') return res();
+    var done = false;
+    function check() {
+      if (done) return;
+      if (pc.iceGatheringState === 'complete') { done = true; res(); }
+    }
+    pc.addEventListener('icegatheringstatechange', check);
+    setTimeout(function () { if (!done) { done = true; res(); } }, 3000);
+    check();
+  });
+}
+
+function netAttachChannel(ch) {
+  net.ch = ch;
+  ch.onopen = function () {
+    net.connected = true;
+    coopStatus('LINK ESTABLISHED', true);
+    toast(netIsHost() ? 'CREWMATE ABOARD' : 'DOCKED WITH HOST SHIP');
+    SFX.power();
+    if (netIsHost()) netSend(['H', ship.code, S.phase]);
+  };
+  ch.onclose = function () {
+    net.connected = false;
+    coopStatus('LINK LOST', false);
+    toast('CREWMATE DISCONNECTED');
+    for (var id in net.peers) removePeer(id);
+  };
+  ch.onmessage = function (ev) {
+    net.stats.recv++;
+    net.lastRx = 0;
+    var m;
+    try { m = JSON.parse(ev.data); } catch (e) { return; }
+    netHandle(m);
+  };
+}
+
+function netHandle(m) {
+  if (!m || !m.length) return;
+  /* the link watchdog resets on any handled message, not just on the channel
+     callback — otherwise an alternate transport silently times out */
+  net.lastRx = 0;
+  var tag = m[0];
+
+  if (tag === 'H') {
+    /* host announces the vessel — clients rebuild on the same seed */
+    if (netIsClient() && ship && ship.code !== m[1]) startGame(m[1], true);
+    return;
+  }
+  if (tag === 'A') {
+    var av = CW.decAvatar(m);
+    if (!av) return;
+    updatePeer('peer', av);
+    return;
+  }
+  if (tag === 'S' && netIsClient()) {
+    applyHostSnapshot(CW.decSnapshot(m));
+    return;
+  }
+  if (tag === 'X') {
+    var act = CW.decAction(m);
+    if (!act) return;
+    netAction(act);
+    return;
+  }
+}
+
+/* actions a client asks the host to perform, and effects the host broadcasts */
+function netAction(act) {
+  if (act.kind === 'hit' && netIsHost()) {
+    for (var i = enemies.length - 1; i >= 0; i--) {
+      if (enemies[i].netId === act.a) {
+        enemies[i].hp -= act.b; enemies[i].flash = 0.12;
+        if (enemies[i].hp <= 0) killEnemy(enemies[i], i);
+        break;
+      }
+    }
+  } else if (act.kind === 'boss' && netIsHost() && boss) {
+    if (act.a === 1) boss._charged = true; else boss._dmg = (boss._dmg || 0) + act.b;
+  } else if (act.kind === 'node' && netIsHost()) {
+    var N = nodeObjs[act.a];
+    if (N && !N.node.done) { N.node.done = true; S.keys[N.node.id] = true; openDoors(); markNodeDone(N); }
+  } else if (act.kind === 'node' && netIsClient()) {
+    var N2 = nodeObjs[act.a];
+    if (N2 && !N2.node.done) { N2.node.done = true; S.keys[N2.node.id] = true; openDoors(); markNodeDone(N2); }
+  } else if (act.kind === 'take') {
+    var P = pickups[act.a];
+    if (P && !P.taken) { P.taken = true; if (P.g) P.g.visible = false; }
+  } else if (act.kind === 'revive') {
+    if (act.a === 1) { S.down = false; S.hp = Math.max(S.hp, 45); toast('YOU ARE BACK UP'); SFX.heal(); }
+  }
+}
+
+function markNodeDone(N) {
+  N.core.material.color.setHex(0x7dffa0);
+  N.col.material.emissive.setHex(0x2bff7a);
+  SFX.repair();
+}
+
+/* ---- remote avatars ---- */
+function updatePeer(id, av) {
+  var p = net.peers[id];
+  if (!p) {
+    var rig = makeAstronaut(0xc9d8b8, 0x4ad4ff);   /* teammate wears a different suit */
+    world.add(rig.g);
+    p = net.peers[id] = { rig: rig, x: av.x, z: av.z, tx: av.x, tz: av.z, yaw: av.yaw, bob: 0, av: av };
+    toast('CREWMATE JOINED');
+  }
+  p.tx = av.x; p.tz = av.z; p.av = av;
+}
+function removePeer(id) {
+  var p = net.peers[id];
+  if (!p) return;
+  world.remove(p.rig.g);
+  delete net.peers[id];
+}
+function updatePeers(dt) {
+  for (var id in net.peers) {
+    var p = net.peers[id];
+    /* interpolate toward the last reported position so packet rate is invisible */
+    p.x += (p.tx - p.x) * Math.min(1, dt * 12);
+    p.z += (p.tz - p.z) * Math.min(1, dt * 12);
+    var moved = Math.hypot(p.tx - p.x, p.tz - p.z) > 0.05 || p.av.moving;
+    p.bob += dt * (moved ? 9 : 1.2);
+    p.rig.g.position.set(p.x, 0, p.z);
+    p.rig.g.rotation.y = p.av.yaw + Math.PI;
+    p.rig.g.visible = true;
+    animateRigBody(p.rig, p.bob, moved ? 1 : 0, p.av.pitch || 0, 0);
+    /* a downed teammate slumps and glows so you can find them */
+    if (p.av.down) {
+      p.rig.g.rotation.x = 1.35;
+      p.rig.visorGlow.material.opacity = 0.6 + Math.sin(performance.now() / 220) * 0.3;
+    } else {
+      p.rig.g.rotation.x = 0;
+    }
+  }
+}
+
+/* ---- host: build and send the world ---- */
+function hostSnapshot() {
+  var en = [];
+  for (var i = 0; i < enemies.length; i++) {
+    var e = enemies[i];
+    if (e.netId === undefined) e.netId = net.nextId++;
+    en.push({ id: e.netId, kindIdx: Math.max(0, ENEMY_KINDS.indexOf(e.kind)),
+      x: e.pos.x, z: e.pos.z, yaw: e.g.rotation.y, wind: e.wind });
+  }
+  var nodes = [];
+  for (var n = 0; n < nodeObjs.length; n++) nodes.push(nodeObjs[n].node.done ? 1 : 0);
+  var taken = [];
+  for (var p = 0; p < pickups.length; p++) if (pickups[p].taken) taken.push(p);
+  return CW.encSnapshot({
+    tick: Math.floor(S.elapsed * 30), enemies: en,
+    bossState: boss ? CW.BOSS_STATES.indexOf(boss.state) : 0,
+    bossArmor: boss ? boss.armor : 0,
+    bossArena: boss ? boss.arena : 0,
+    nodes: nodes, taken: taken, phase: S.phase,
+    waveState: S.waves ? CW.WAVE_STATES.indexOf(S.waves.state) : 0,
+    wave: S.waves ? S.waves.wave : 0, alert: S.alert
+  });
+}
+
+/* ---- client: mirror the host's world ---- */
+function applyHostSnapshot(snap) {
+  if (!snap) return;
+  S.phase = snap.phase;
+  S.alert = snap.alert;
+  if (S.waves) { S.waves.state = CW.WAVE_STATES[snap.waveState] || 'LULL'; S.waves.wave = snap.wave; }
+  if (boss) {
+    var st = CW.BOSS_STATES[snap.bossState];
+    if (st) boss.state = st;
+    boss.armor = snap.bossArmor;
+    boss.arena = snap.bossArena;
+    if (boss.state === 'DEAD' && bossMesh) bossMesh.group.visible = false;
+  }
+  for (var n = 0; n < nodeObjs.length && n < snap.nodes.length; n++) {
+    if (snap.nodes[n] && !nodeObjs[n].node.done) {
+      nodeObjs[n].node.done = true;
+      S.keys[nodeObjs[n].node.id] = true;
+      openDoors(); markNodeDone(nodeObjs[n]);
+    }
+  }
+  for (var k = 0; k < snap.taken.length; k++) {
+    var P = pickups[snap.taken[k]];
+    if (P && !P.taken) { P.taken = true; if (P.g) P.g.visible = false; }
+  }
+  CW.applySnapshot(net.mirror, snap, {
+    spawn: function (id, kindIdx, x, z) {
+      spawnEnemy(ENEMY_KINDS[kindIdx] || 'skitter', x, z);
+      var e = enemies[enemies.length - 1];
+      if (e) { e.netId = id; e.remote = true; }
+      return e || null;
+    },
+    update: function (rec, e) {
+      rec.netTX = e.x; rec.netTZ = e.z; rec.netYaw = e.yaw; rec.wind = e.wind ? CFG.ATTACK_WINDUP * 0.5 : 0;
+    },
+    remove: function (rec) {
+      var i = enemies.indexOf(rec);
+      if (i >= 0) { killEnemy(rec, i); }
+    }
+  });
+}
+
+function netTick(dt) {
+  if (net.mode === 'solo') return;
+  net.lastRx += dt;
+  if (net.connected && net.lastRx > 8) {
+    net.connected = false;
+    coopStatus('LINK TIMED OUT', false);
+  }
+  if (!net.connected) return;
+
+  net.sendAcc += dt;
+  if (net.sendAcc >= 1 / CW.NET_AVATAR_HZ) {
+    net.sendAcc = 0;
+    netSend(CW.encAvatar({
+      x: player.pos.x, z: player.pos.z, yaw: S.yaw, pitch: S.pitch,
+      wep: S.wep, hp: S.hp, moving: S.movingNow, down: !!S.down,
+      charges: S.charges, name: net.myName
+    }));
+  }
+  if (netIsHost()) {
+    net.snapAcc += dt;
+    if (net.snapAcc >= 1 / CW.NET_SNAPSHOT_HZ) { net.snapAcc = 0; netSend(hostSnapshot()); }
+  }
+  updatePeers(dt);
+}
+
+/* ---- downed and revive ---- */
+function reviveTick(dt) {
+  if (!S.down) {
+    if (S.reviveSt) { S.reviveSt.t = 0; S.reviveSt.bleed = 0; }
+    $('revive').style.display = 'none';
+    if (net.mode === 'solo') for (var z in net.peers) { if (net.peers[z].revT) net.peers[z].revT = 0; }
+    return;
+  }
+  if (!S.reviveSt) S.reviveSt = { t: 0, bleed: 0 };
+  /* the bleed timer keeps running even if the link drops — being downed must
+     always resolve one way or the other, never freeze */
+
+  /* am I being helped? */
+  var helper = false;
+  for (var id in net.peers) {
+    var p = net.peers[id];
+    if (p.av.down) continue;
+    if (Math.hypot(p.x - player.pos.x, p.z - player.pos.z) < CW.REVIVE_RANGE) helper = true;
+  }
+  var r = CW.reviveStep(S.reviveSt, dt, { down: !!S.down, helperNear: helper });
+  var bar = $('revive');
+  if (S.down) {
+    bar.style.display = 'block';
+    $('reviveF').style.width = (r.progress * 100) + '%';
+    $('reviveT').textContent = helper
+      ? 'CREWMATE REVIVING YOU  ' + ((1 - r.progress) * CW.REVIVE_TIME).toFixed(1) + 's'
+      : 'DOWN — ' + Math.max(0, CW.DOWN_BLEED - (r.bleed || 0)).toFixed(0) + 's TO BLEED OUT';
+    if (r.done) {
+      S.down = false; S.hp = 45; bar.style.display = 'none';
+      toast('BACK ON YOUR FEET'); SFX.heal();
+    } else if ((r.bleed || 0) >= CW.DOWN_BLEED) {
+      endGame(false, 'BLED OUT', 'No one reached you in time.');
+    }
+  } else bar.style.display = 'none';
+
+  /* am I reviving someone? */
+  for (var id2 in net.peers) {
+    var q = net.peers[id2];
+    if (!q.av.down) { q.revT = 0; continue; }
+    var near = Math.hypot(q.x - player.pos.x, q.z - player.pos.z) < CW.REVIVE_RANGE;
+    if (!near) { q.revT = Math.max(0, (q.revT || 0) - dt * 1.5); continue; }
+    q.revT = (q.revT || 0) + dt;
+    if (q.revT >= CW.REVIVE_TIME) {
+      q.revT = 0;
+      netSend(CW.encAction('revive', 1));
+      toast('CREWMATE REVIVED');
+    }
+  }
+}
+
+/* ---- handshake UI ---- */
+function coopStatus(txt, good) {
+  var el = $('coopStatus');
+  if (!el) return;
+  el.textContent = txt;
+  el.style.color = good ? '#7dffa0' : '#ff9d6b';
+}
+function coopHost() {
+  net.mode = 'host';
+  coopStatus('CREATING INVITE…', true);
+  try { net.pc = new RTCPeerConnection(netRTCConfig()); } catch (e) { coopStatus('WEBRTC UNAVAILABLE', false); return; }
+  var ch = net.pc.createDataChannel('cw', { ordered: false, maxRetransmits: 0 });
+  netAttachChannel(ch);
+  net.pc.createOffer().then(function (o) { return net.pc.setLocalDescription(o); })
+    .then(function () { return withIce(net.pc); })
+    .then(function () {
+      $('coopOut').value = CW.packSignal({ t: 'offer', sdp: net.pc.localDescription.sdp });
+      coopStatus('SEND THIS INVITE, THEN PASTE THEIR REPLY BELOW', true);
+    }).catch(function (e) { coopStatus('INVITE FAILED: ' + e.message, false); });
+}
+function coopJoin() {
+  var sig = CW.unpackSignal($('coopIn').value);
+  if (!sig || sig.error) { coopStatus('THAT INVITE CODE IS NOT VALID', false); return; }
+  net.mode = 'client';
+  coopStatus('BUILDING REPLY…', true);
+  try { net.pc = new RTCPeerConnection(netRTCConfig()); } catch (e) { coopStatus('WEBRTC UNAVAILABLE', false); return; }
+  net.pc.ondatachannel = function (ev) { netAttachChannel(ev.channel); };
+  net.pc.setRemoteDescription({ type: 'offer', sdp: sig.sdp })
+    .then(function () { return net.pc.createAnswer(); })
+    .then(function (a) { return net.pc.setLocalDescription(a); })
+    .then(function () { return withIce(net.pc); })
+    .then(function () {
+      $('coopOut').value = CW.packSignal({ t: 'answer', sdp: net.pc.localDescription.sdp });
+      coopStatus('SEND THIS REPLY BACK TO THE HOST', true);
+    }).catch(function (e) { coopStatus('REPLY FAILED: ' + e.message, false); });
+}
+function coopAccept() {
+  var sig = CW.unpackSignal($('coopIn').value);
+  if (!sig || sig.error) { coopStatus('THAT REPLY CODE IS NOT VALID', false); return; }
+  if (!net.pc) { coopStatus('CREATE AN INVITE FIRST', false); return; }
+  net.pc.setRemoteDescription({ type: 'answer', sdp: sig.sdp })
+    .then(function () { coopStatus('CONNECTING…', true); })
+    .catch(function (e) { coopStatus('COULD NOT CONNECT: ' + e.message, false); });
+}
+
+/* ================= INTRO =================
+   The premise from the design doc, delivered on boarding. Non-blocking: nothing
+   spawns during the tutorial phase, so the ship carries on around you. */
+var intro = { on: false, t: 0, step: 0, done: false };
+var INTRO_BEATS = [1.0, 4.4, 7.4, 13.4, 15.4];   /* seconds at which each line lands */
+
+function startIntro() {
+  intro.on = true; intro.t = 0; intro.step = 0; intro.done = false;
+  var el = $('intro');
+  $('introShip').textContent = 'VESSEL ' + ship.code + '  ·  DEEP TRANSIT  ·  NO SIGNAL';
+  var ps = $('introBody').children;
+  for (var i = 0; i < ps.length; i++) ps[i].classList.remove('on');
+  $('introOrders').classList.remove('on');
+  $('introSkip').classList.remove('on');
+  el.style.display = 'flex';
+}
+function endIntro() {
+  if (!intro.on) return;
+  intro.on = false; intro.done = true;
+  $('intro').style.display = 'none';
+  toast('CRYOBAY — SHIP ' + ship.code);
+}
+function introTick(dt) {
+  if (!intro.on) return;
+  intro.t += dt;
+  var ps = $('introBody').children;
+  while (intro.step < INTRO_BEATS.length && intro.t >= INTRO_BEATS[intro.step]) {
+    var i = intro.step;
+    if (i < ps.length) {
+      ps[i].classList.add('on');
+      blip(320 + i * 70, 0.16, 'sine', 0.07, 480 + i * 90);
+    } else if (i === ps.length) {
+      $('introOrders').classList.add('on');
+      musicSting('phase');
+    } else {
+      $('introSkip').classList.add('on');
+    }
+    intro.step++;
+  }
+  /* it always ends on its own, so a player who puts the phone down is not stuck */
+  if (intro.t > 24) endIntro();
+}
+
 /* ================= LIFECYCLE ================= */
 function endGame(win, title, body) {
   if (ended) return;
@@ -4341,7 +5018,7 @@ function endGame(win, title, body) {
   $('endScreen').style.display = 'flex';
 }
 
-function startGame(code) {
+function startGame(code, keepNet) {
   ship = CW.generateShip(code);
   var v = CW.verifyShip(ship);
   if (!v.ok) console.warn('UNSOLVABLE SHIP', v.fail);
@@ -4352,12 +5029,15 @@ function startGame(code) {
     keys: {}, wep: 0, alert: 0, room: 0, invuln: 0, shake: 0, bob: 0, charging: 0, cool: 0,
     spawnT: 2, part: false, powerT1: false, yaw: 0, pitch: 0, recoil: 0, kick: 0,
     elapsed: 0, phase: 0, hotEver: false, waves: CW.newWaves(), waveMsg: 0,
-    fc: CW.newFieldCharge(), fcHurt: false, fcWas: false, fieldBtn: false, tut: 0, tutOn: tutorialEnabled,
+    fc: CW.newFieldCharge(), fcHurt: false, fcWas: false, fieldBtn: false,
+    down: false, reviveSt: { t: 0, bleed: 0 }, movingNow: false, tut: 0, tutOn: tutorialEnabled,
     tutMove: 0, tutLook: 0, tutShots: 0, chitter: 0
   };
   dmgMarks = [];
   for (var dq = 0; dq < 4; dq++) { var dd = $('dmg' + dq); if (dd) dd.style.opacity = '0'; }
   boss = null; bossMesh = null; bossGroup = null; ended = false; firing = false; charging = false;
+  if (!keepNet) { net.peers = {}; net.mirror = {}; }
+  else { net.peers = {}; net.mirror = {}; }
   sky = null; exterior = null; sunLight = null; asteroids = [];
 
   scene = new THREE.Scene();
@@ -4387,7 +5067,7 @@ function startGame(code) {
   $('title').style.display = 'none';
   $('endScreen').style.display = 'none';
   running = true;
-  toast('SHIP ' + ship.code + ' — CRYOBAY');
+  startIntro();
 }
 
 function frame() {
@@ -4463,6 +5143,12 @@ window.__CW = {
   get playerRig() { return player; },
   get waves() { return S.waves; },
   get fc() { return S.fc; },
+  get intro() { return intro; },
+  get net() { return net; },
+  netHandle: function (m) { netHandle(m); },
+  hostSnapshot: function () { return hostSnapshot(); },
+  setNetMode: function (m) { net.mode = m; net.connected = m !== 'solo'; },
+  endIntro: function () { endIntro(); },
   setField: function (v) { S.fieldBtn = v; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
   hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, rayWorld: rayWorld, PLR_R: PLR_R,
   start: function (c) { startGame(c); }, hurt: function (d) { hurtPlayer(d); },
