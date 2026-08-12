@@ -57,6 +57,8 @@ body.touch .stick,body.touch #fireBtn{display:block}
 
 #viewBtn{position:absolute;right:calc(12px + env(safe-area-inset-right));bottom:calc(198px + env(safe-area-inset-bottom));padding:7px 11px;background:rgba(8,15,22,.84);border:1px solid #1f2c39;font-size:9px;letter-spacing:.1em;color:#7f9db4;pointer-events:auto;border-radius:3px;z-index:4}
 #muteBtn{position:absolute;right:calc(12px + env(safe-area-inset-right));bottom:calc(228px + env(safe-area-inset-bottom));padding:7px 11px;background:rgba(8,15,22,.84);border:1px solid #1f2c39;font-size:9px;letter-spacing:.1em;color:#7f9db4;pointer-events:auto;border-radius:3px;z-index:4}
+#vrBtn{position:absolute;right:calc(12px + env(safe-area-inset-right));bottom:calc(258px + env(safe-area-inset-bottom));padding:7px 11px;background:rgba(14,30,42,.9);border:1px solid #4f9fc4;font-size:9px;letter-spacing:.1em;color:#bfe6ff;pointer-events:auto;border-radius:3px;z-index:4;display:none}
+body.xr #hud{display:none}
 
 #act{position:absolute;left:50%;top:58%;transform:translateX(-50%);padding:9px 16px;background:rgba(10,24,34,.88);border:1px solid #4f9fc4;border-radius:3px;font-size:11px;letter-spacing:.1em;color:#bfe6ff;display:none;pointer-events:auto;text-align:center;z-index:4}
 #act small{display:block;font-size:8px;color:#6f95ac;letter-spacing:.14em;margin-top:3px}
@@ -135,13 +137,14 @@ body.touch .stick,body.touch #fireBtn{display:block}
   <div id="fireBtn">FIRE</div>
   <div id="viewBtn">1ST / 3RD</div>
   <div id="muteBtn">SOUND: ON</div>
+  <div id="vrBtn">ENTER VR</div>
   <div id="toast"></div>
 </div>
 <div id="flash"></div>
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 08</div>
+  <div class="sub">VERTICAL SLICE · BUILD 09</div>
   <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
   <p style="font-size:10px;color:#5f7f96;margin-bottom:14px">HEADPHONES RECOMMENDED — THE SCORE REACTS TO WHAT IS HUNTING YOU</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
@@ -154,7 +157,8 @@ body.touch .stick,body.touch #fireBtn{display:block}
     EVERY SHIP CODE GENERATES A DIFFERENT VESSEL<br>
     DESKTOP — CLICK TO LOCK MOUSE · WASD MOVE · MOUSE LOOK · LMB FIRE · RMB CHARGE RIFLE<br>
     E INTERACT · 1/2/3 WEAPONS · V VIEW · M SOUND · SHIFT SPRINT · ESC RELEASE MOUSE<br>
-    MOBILE — LEFT STICK MOVE · DRAG TO LOOK · FIRE BUTTON · TAP PROMPT TO INTERACT
+    MOBILE — LEFT STICK MOVE · DRAG TO LOOK · FIRE BUTTON · TAP PROMPT TO INTERACT<br>
+    QUEST 3 — ENTER VR APPEARS WHEN SUPPORTED · LEFT STICK MOVES · RIGHT STICK SNAP TURNS · TRIGGER FIRES · GRIP INTERACTS
   </div>
 </div>
 
@@ -737,7 +741,7 @@ var CFG = CW.CFG;
 var $ = function (id) { return document.getElementById(id); };
 
 /* ---- constants ---- */
-var DOOR_W = 5.2, WALL_H = 7.2, WALL_T = 1, PLR_R = 0.8, ENEMY_CAP = 20;
+var DOOR_W = 5.2, WALL_H = 7.2, WALL_T = 1, PLR_R = 0.68, ENEMY_CAP = 20;
 var TUBE_R = 3.7, TUBE_Y = 2.45, DOME_H = 4.2;
 var WIN_Y0 = 1.55, WIN_Y1 = 4.35, SKY_R = 300;
 var EYE = 1.72, SPEED = 8.6, SPRINT = 13.4, LIGHT_POOL = 7;
@@ -750,6 +754,7 @@ var lightAnchors = [], lightPool = [], headLamp = null;
 var player, boss = null, bossMesh = null, bossGroup = null;
 var enemies = [], projectiles = [], beams = [], particles = [], tracers = [];
 var running = false, ended = false, firstPerson = true, tutorialEnabled = true;
+var xrOn = false, xrRig = null, xrCtrl = [], xrSnapCool = 0, xrSupported = false;
 var viewGun = null, tpRig = null;
 
 var S = {
@@ -1600,9 +1605,12 @@ function buildWorld() {
     R._g = G;
     R.rad = (R.w + R.d) / 4;
     buildRoomShell(G, R, sec, rnd);
+    R._fixtures = [];
+    /* fixtures first, so prop placement can keep clear of them */
+    for (var n = 0; n < R.nodes.length; n++) buildNode(G, R, R.nodes[n], sec);
+    if (R.role === 'CRYOBAY') buildBench(G, R);
     buildRoomDetail(G, R, sec, rnd);
     buildVents(G, R, rnd);
-    for (var n = 0; n < R.nodes.length; n++) buildNode(G, R, R.nodes[n], sec);
     for (var sc = 0; sc < R.scrap.length; sc++) {
       var ps = polarIn(R, rnd, 0.74); buildPickup(G, R.scrap[sc].type, ps.x, ps.z);
     }
@@ -1612,7 +1620,6 @@ function buildWorld() {
     for (var mk = 0; mk < (R.medkits || []).length; mk++) {
       var ms = polarIn(R, rnd, 0.68); buildPickup(G, 'medkit', ms.x, ms.z);
     }
-    if (R.role === 'CRYOBAY') buildBench(G, R);
     for (var l2 = 0; l2 < R.links.length; l2++) {
       var B = ship.rooms[R.links[l2].to];
       var pk = Math.min(R.id, B.id) + '-' + Math.max(R.id, B.id);
@@ -1715,20 +1722,58 @@ function buildRoomShell(G, R, sec, rnd) {
     });
   }
 
-  /* lintel over each opening, plus a collar ring framing it */
+  /* BULKHEAD PLATES.
+     A cylindrical tube meeting a cylindrical hull leaves crescent-shaped holes
+     either side of the tube — that is the broken geometry. Fix: a flat plate
+     spanning the chord of the doorway slot, with a circular hole punched for the
+     tube. The plate's edges land exactly on the hull arc endpoints, so the seal
+     is exact rather than approximate. */
+  for (var bp = 0; bp < vg.length; bp++) {
+    var ba = vg[bp].a, bh = vg[bp].half;
+    var chordHalf = rad * Math.sin(bh), inset = rad * Math.cos(bh);
+
+    var shape = new THREE.Shape();
+    shape.moveTo(-chordHalf, 0);
+    shape.lineTo(chordHalf, 0);
+    shape.lineTo(chordHalf, WALL_H);
+    shape.lineTo(-chordHalf, WALL_H);
+    shape.lineTo(-chordHalf, 0);
+    var hole = new THREE.Path();
+    hole.absarc(0, TUBE_Y, TUBE_R, 0, Math.PI * 2, true);
+    shape.holes.push(hole);
+
+    var plate = new THREE.Mesh(new THREE.ShapeGeometry(shape, 22), new THREE.MeshToonMaterial({
+      color: 0x2c3742, gradientMap: gradMap, emissive: 0x0a1017,
+      emissiveIntensity: 0.55, side: THREE.DoubleSide
+    }));
+    plate.position.set(R.cx + Math.sin(ba) * inset, 0, R.cz + Math.cos(ba) * inset);
+    plate.rotation.y = ba + Math.PI;
+    G.add(plate);
+
+    /* collar ring dressing the hole */
+    var collar = new THREE.Mesh(new THREE.TorusGeometry(TUBE_R + 0.06, 0.16, 6, 22), MAT.strut);
+    collar.position.set(R.cx + Math.sin(ba) * (inset - 0.1), TUBE_Y, R.cz + Math.cos(ba) * (inset - 0.1));
+    collar.rotation.y = ba;
+    G.add(collar);
+    /* bolt heads around the collar */
+    for (var bo = 0; bo < 10; bo++) {
+      var boa = (bo / 10) * Math.PI * 2;
+      var bx2 = Math.cos(boa) * (TUBE_R + 0.4), by2 = TUBE_Y + Math.sin(boa) * (TUBE_R + 0.4);
+      if (by2 < 0.2) continue;
+      var bolt = new THREE.Mesh(new THREE.CylinderGeometry(0.09, 0.09, 0.14, 6), MAT.bolt);
+      bolt.position.set(R.cx + Math.sin(ba) * (inset - 0.16) + Math.cos(ba) * bx2, by2,
+                        R.cz + Math.cos(ba) * (inset - 0.16) - Math.sin(ba) * bx2);
+      bolt.rotation.x = Math.PI / 2; bolt.rotation.z = ba;
+      G.add(bolt);
+    }
+  }
+
   var crown = TUBE_Y + TUBE_R;
   for (var gi = 0; gi < vg.length; gi++) {
-    var lh = Math.max(0.2, WALL_H - crown);
-    var lint = new THREE.Mesh(
-      new THREE.CylinderGeometry(1, 1, 1, 8, 1, true, vg[gi].a - vg[gi].half, vg[gi].half * 2), hullMat);
-    lint.scale.set(rad, lh, rad);
-    lint.position.set(R.cx, crown + lh / 2, R.cz);
-    G.add(lint);
-
-    var collar = new THREE.Mesh(new THREE.TorusGeometry(TUBE_R - 0.1, 0.17, 6, 18), MAT.strut);
-    collar.position.set(R.cx + Math.sin(vg[gi].a) * (rad - 0.15), TUBE_Y, R.cz + Math.cos(vg[gi].a) * (rad - 0.15));
-    collar.rotation.y = vg[gi].a;
-    G.add(collar);
+    lightAnchors.push({
+      x: R.cx + Math.sin(vg[gi].a) * (rad - 2.2), y: crown - 0.6,
+      z: R.cz + Math.cos(vg[gi].a) * (rad - 2.2), color: 0x8fa8bd, base: 0.45
+    });
   }
 
   /* hull collision with a gap at every doorway */
@@ -1840,11 +1885,11 @@ function buildRoomDetail(G, R, sec, rnd) {
   }
 
   /* --- consoles arranged tangentially around the perimeter --- */
-  var nCons = 2 + Math.floor(rnd() * 3);
+  var nCons = rad > 8.5 ? 1 + Math.floor(rnd() * 2) : 1;
   for (var cn = 0; cn < nCons; cn++) {
     var caa = rnd() * Math.PI * 2;
     if (blocked(caa, 0.35)) continue;
-    var cr = rad - 1.5;
+    var cr = rad - 1.15;
     buildConsole(G, R.cx + Math.sin(caa) * cr, R.cz + Math.cos(caa) * cr, caa + Math.PI, rnd, btn);
   }
 
@@ -1852,7 +1897,7 @@ function buildRoomDetail(G, R, sec, rnd) {
          A pillar at the room's centre sits across every doorway axis and blindfolds
          the whole room. Offsetting keeps the shippy look and the cover without
          cutting the sightlines. --- */
-  if (rad > 8.6 && R.role !== 'REACTOR' && R.nodes.length === 0) {
+  if (rad > 10.5 && R.role !== 'REACTOR' && R.nodes.length === 0) {
     var ca2 = clearAngle(R, null);
     var cxp = R.cx + Math.sin(ca2) * rad * 0.46, czp = R.cz + Math.cos(ca2) * rad * 0.46;
     var col = new THREE.Mesh(new THREE.CylinderGeometry(0.95, 1.25, WALL_H, 12), MAT.hull);
@@ -1895,17 +1940,46 @@ function buildConsole(G, x, z, ry, rnd, btn) {
       btn[Math.floor(rnd() * btn.length)].add(wx, ly, wz, 0.09, 0.045, 0.09, 0, ry, 0);
     }
   }
-  var cc = addBox(x - 0.95, x + 0.95, z - 0.5, z + 0.5, 1.3);
+  var cc = addBox(x - 0.8, x + 0.8, z - 0.42, z + 0.42, 1.3);
   cc.clearable = g;
 }
 
+function fixtureClear(R, x, z, minD) {
+  /* every non-prop fixture registers here so props keep their distance */
+  var list = R._fixtures || [];
+  for (var i = 0; i < list.length; i++) {
+    if (Math.hypot(x - list[i].x, z - list[i].z) < minD) return false;
+  }
+  return true;
+}
+function noteFixture(R, x, z) {
+  if (!R._fixtures) R._fixtures = [];
+  R._fixtures.push({ x: x, z: z });
+}
 function addProps(G, R, sec, rnd, bBolt) {
-  var n = 3 + Math.floor(rnd() * 4);
-  var vgap = viewGaps(R);
+  /* Clutter was the main cause of getting pinned while something ate you.
+     Fewer props, pushed out toward the hull, spaced apart, and with colliders
+     tighter than the visual so you brush past instead of snagging. */
+  /* scale with floor area: a flat count crams a small room and leaves a big one
+     empty, and cramming is what gets you pinned while something eats you */
+  var area = Math.PI * R.rad * R.rad;
+  var n = Math.max(1, Math.min(4, Math.round(area / 130)));
+  var vgap = viewGaps(R), placed = [];
   for (var i = 0; i < n; i++) {
-    var ps = polarIn(R, rnd, 0.74);
+    var ps = null;
+    for (var tryI = 0; tryI < 24 && !ps; tryI++) {
+      var c = polarIn(R, rnd, 0.9);
+      /* keep the middle of the room open: props live in the outer band only */
+      if (c.rad < R.rad * 0.72 || c.rad > R.rad - 2.2) continue;
+      var far = true;
+      for (var q = 0; q < placed.length; q++) {
+        if (Math.hypot(c.x - placed[q].x, c.z - placed[q].z) < 6.0) far = false;
+      }
+      if (far && fixtureClear(R, c.x, c.z, 5.2)) ps = c;
+    }
+    if (!ps) continue;
+    placed.push(ps);
     var x = ps.x, z = ps.z;
-    if (ps.rad < 3.8) continue;
     /* keep the entrance lanes clear: a prop parked in a doorway throat blocks
        navigation entirely and is miserable to round a corner into */
     var inLane = false;
@@ -1959,7 +2033,8 @@ function addProps(G, R, sec, rnd, bBolt) {
     g.position.set(x, 0, z);
     g.rotation.y = Math.atan2(x - R.cx, z - R.cz);
     G.add(g);
-    var span = Math.max(w, dp) / 2;
+    /* collider tighter than the mesh so you slide past rather than snag */
+    var span = Math.max(w, dp) / 2 * 0.82;
     var pc = addBox(x - span, x + span, z - span, z + span, h);
     pc.clearable = g; pc.room = R.id;
   }
@@ -1994,15 +2069,19 @@ function buildVents(G, R, rnd) {
   }
 }
 
+/* the tube must reach past the bulkhead plate, which sits on the chord */
+function tubeStart(R) {
+  return Math.sqrt(Math.max(1, R.rad * R.rad - TUBE_R * TUBE_R)) - 0.6;
+}
 function buildCorridor(G, A, B, sec, rnd) {
   var d = dirOf(A, B), HALF = Math.PI / 2;
   var horiz = d.x !== 0;
   var lo, hi, cross;
   if (horiz) {
-    var x0 = A.cx + d.x * (A.rad - 0.45), x1 = B.cx - d.x * (B.rad - 0.45);
+    var x0 = A.cx + d.x * (tubeStart(A)), x1 = B.cx - d.x * (tubeStart(B));
     lo = Math.min(x0, x1); hi = Math.max(x0, x1); cross = A.cz;
   } else {
-    var z0 = A.cz + d.z * (A.rad - 0.45), z1 = B.cz - d.z * (B.rad - 0.45);
+    var z0 = A.cz + d.z * (tubeStart(A)), z1 = B.cz - d.z * (tubeStart(B));
     lo = Math.min(z0, z1); hi = Math.max(z0, z1); cross = A.cx;
   }
   var len = hi - lo;
@@ -2062,13 +2141,13 @@ function buildCorridor(G, A, B, sec, rnd) {
   [-1, 1].forEach(function (sgn) {
     if (horiz) {
       var wz = cross + sgn * (DOOR_W / 2 + WALL_T / 2);
-      addBox(lo - 1.6, hi + 1.6, wz - WALL_T / 2, wz + WALL_T / 2, WALL_H);
+      addBox(lo - 0.5, hi + 0.5, wz - WALL_T / 2, wz + WALL_T / 2, WALL_H);
       /* kick rail where the deck meets the curve */
       var rail = new THREE.Mesh(new THREE.BoxGeometry(len, 0.55, 0.3), MAT.strut);
       rail.position.set(mid, 0.28, wz - sgn * 0.2); G.add(rail);
     } else {
       var wx = cross + sgn * (DOOR_W / 2 + WALL_T / 2);
-      addBox(wx - WALL_T / 2, wx + WALL_T / 2, lo - 1.6, hi + 1.6, WALL_H);
+      addBox(wx - WALL_T / 2, wx + WALL_T / 2, lo - 0.5, hi + 0.5, WALL_H);
       var rail2 = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.55, len), MAT.strut);
       rail2.position.set(wx - sgn * 0.2, 0.28, mid); G.add(rail2);
     }
@@ -2174,11 +2253,11 @@ function buildDoors() {
 
 function buildBench(G, R) {
   var ba = clearAngle(R, null);
-  var bx = R.cx + Math.sin(ba) * R.rad * 0.5, bz = R.cz + Math.cos(ba) * R.rad * 0.5;
+  var bx = R.cx + Math.sin(ba) * (R.rad - 2.3), bz = R.cz + Math.cos(ba) * (R.rad - 2.3);
   var g = new THREE.Group();
-  var top = new THREE.Mesh(new THREE.BoxGeometry(4.4, 0.3, 2.2), MAT.console);
+  var top = new THREE.Mesh(new THREE.BoxGeometry(3.4, 0.3, 1.7), MAT.console);
   top.position.y = 1.5; g.add(top);
-  var leg = new THREE.Mesh(new THREE.BoxGeometry(4.0, 1.5, 1.8), MAT.hullDark);
+  var leg = new THREE.Mesh(new THREE.BoxGeometry(3.1, 1.5, 1.4), MAT.hullDark);
   leg.position.y = 0.75; g.add(leg);
   var coil = new THREE.Mesh(new THREE.TorusGeometry(0.75, 0.2, 6, 14), toon(0x4a3a7a, 0x7a5cff, 0.7));
   coil.position.set(0, 2.25, 0); coil.rotation.x = Math.PI / 2; g.add(coil);
@@ -2187,7 +2266,8 @@ function buildBench(G, R) {
   var scr = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.8, 0.06), MAT.screenA);
   scr.position.set(1.4, 2.3, -0.4); scr.rotation.y = -0.4; g.add(scr);
   g.position.set(bx, 0, bz); g.rotation.y = ba + Math.PI; G.add(g);
-  addBox(bx - 2.2, bx + 2.2, bz - 1.1, bz + 1.1, 1.8);
+  addBox(bx - 1.5, bx + 1.5, bz - 0.7, bz + 0.7, 1.8);
+  noteFixture(R, bx, bz);
   pickups.push({ kind: 'bench', x: bx - Math.sin(ba) * 2.2, z: bz - Math.cos(ba) * 2.2, g: g, coil: coil, r: 3.4, room: R.id });
   lightAnchors.push({ x: bx, y: 3.0, z: bz, color: 0x7a5cff, base: 1.2 });
 
@@ -2195,7 +2275,7 @@ function buildBench(G, R) {
   var ta = clearAngle(R, [ba]);
   /* well inside the hull: pushed out to 0.55r it ends up against the wall with no
      room to stand behind and shoot it */
-  var tx = R.cx + Math.sin(ta) * R.rad * 0.34, tz = R.cz + Math.cos(ta) * R.rad * 0.34;
+  var tx = R.cx + Math.sin(ta) * (R.rad - 2.6), tz = R.cz + Math.cos(ta) * (R.rad - 2.6);
   var tg = new THREE.Group();
   var can = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 1.9, 10), toon(0xb8912f, 0xffd08a, 0.35));
   can.position.y = 1.5; tg.add(can);
@@ -2206,7 +2286,8 @@ function buildBench(G, R) {
     bnd.position.y = 1.05 + rr * 0.9; bnd.rotation.x = Math.PI / 2; tg.add(bnd);
   }
   tg.position.set(tx, 0, tz); G.add(tg);
-  addBox(tx - 0.7, tx + 0.7, tz - 0.7, tz + 0.7, 2.5);
+  addBox(tx - 0.6, tx + 0.6, tz - 0.6, tz + 0.6, 2.5);
+  noteFixture(R, tx, tz);
   targets.push({ x: tx, y: 1.5, z: tz, r: 0.95, hp: 36, g: tg, can: can, dead: false });
   lightAnchors.push({ x: tx, y: 2.6, z: tz, color: 0xffd08a, base: 0.5 });
 }
@@ -2225,11 +2306,14 @@ function buildNode(G, R, node, sec) {
   core.position.y = 3.8; g.add(core);
   var conduit = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.2, 6), MAT.pipeRust);
   conduit.position.set(1.1, 2.6, 0); conduit.rotation.z = 0.3; g.add(conduit);
-  var off = (R.role === 'REACTOR' || R.role === 'CRYOBAY') ? R.rad * 0.42 : 0;
-  var na = off ? clearAngle(R, null) + 1.15 : 0;
+  /* mounted against the hull, not mid-floor: a column in the middle of the room
+     blocks every lap and is the thing you back into while being chased */
+  var off = R.rad - 2.7;
+  var na = clearAngle(R, null) + 1.15;
   var px = R.cx + Math.sin(na) * off, pz = R.cz + Math.cos(na) * off;
-  g.position.set(px, 0, pz); G.add(g);
-  addBox(px - 1.15, px + 1.15, pz - 1.15, pz + 1.15, 4.2);
+  g.position.set(px, 0, pz); g.rotation.y = na; G.add(g);
+  addBox(px - 0.85, px + 0.85, pz - 0.85, pz + 0.85, 4.2);
+  noteFixture(R, px, pz);
   nodeObjs.push({ node: node, room: R.id, x: px, z: pz, g: g, core: core, col: col, r: 3.8 });
   lightAnchors.push({ x: px, y: 3.8, z: pz, color: 0xff5a3c, base: 1.3, node: nodeObjs[nodeObjs.length - 1] });
 }
@@ -2564,52 +2648,204 @@ function buildBoss(R) {
 }
 
 /* ================= PLAYER ================= */
-function buildPlayer(R) {
+function limb(len, rTop, rBot, mat, outline) {
+  /* a limb segment whose pivot is at its TOP, so rotating it swings correctly */
   var g = new THREE.Group();
-  var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.58, 1.0, 8), toon(0x3f6f8e, 0x0d2432, 0.4));
-  torso.position.y = 1.16; g.add(torso);
-  var pack = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.8, 0.34), MAT.hullDark);
-  pack.position.set(0, 1.22, -0.44); g.add(pack);
-  var hips = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.42, 0.42), toon(0x2c4a5e, 0x0d2432, 0.4));
-  hips.position.y = 0.62; g.add(hips);
-  var legs = [];
-  for (var i = 0; i < 2; i++) {
-    var lg = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.14, 0.85, 6), toon(0x2c4a5e));
-    lg.position.set((i ? 0.19 : -0.19), 0.42, 0); g.add(lg); legs.push(lg);
+  var m = new THREE.Mesh(new THREE.CylinderGeometry(rTop, rBot, len, 8), mat);
+  m.position.y = -len / 2; g.add(m);
+  if (outline !== false) {
+    var cap = new THREE.Mesh(new THREE.SphereGeometry(rBot * 1.05, 8, 6), mat);
+    cap.position.y = -len; g.add(cap);
   }
-  var head = new THREE.Mesh(new THREE.SphereGeometry(0.36, 12, 9), toon(0x5a90ae, 0x0d2432, 0.35));
-  head.position.y = 1.85; g.add(head);
-  var visor = new THREE.Mesh(new THREE.SphereGeometry(0.29, 12, 9, 0, Math.PI), basic(0x9fe8ff));
-  visor.position.set(0, 1.87, 0.13); visor.rotation.y = Math.PI; g.add(visor);
-  var gun = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.2, 1.2), toon(0x2b3843, 0x111820, 0.4));
-  gun.position.set(0.34, 1.24, 0.6); g.add(gun);
-  /* spawn on a cell proven to belong to the ship's main walkable component —
-     picking a spot by eye can drop the player in a sealed pocket */
+  return g;
+}
+
+function buildPlayer(R) {
+  var suit = toon(0xd9e2ea, 0x2c3d4c, 0.35);       /* white EVA suit */
+  var suitDark = toon(0x4a5a68, 0x141c24, 0.5);    /* joints and soft goods */
+  var accent = toon(0xff8a3d, 0x3a1c08, 0.5);      /* hazard orange trim */
+  var metal = MAT.bolt;
+
+  var g = new THREE.Group();
+  var root = new THREE.Group(); g.add(root);       /* bobs with the walk cycle */
+
+  /* --- pelvis and torso --- */
+  var hips = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.34, 0.4), suitDark);
+  hips.position.y = 0.94; root.add(hips);
+
+  var chest = new THREE.Group(); chest.position.y = 1.12; root.add(chest);
+  var torso = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.44, 0.72, 10), suit);
+  torso.position.y = 0.3; chest.add(torso);
+  var collar = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.33, 0.16, 10), suitDark);
+  collar.position.y = 0.7; chest.add(collar);
+  /* chest control panel */
+  var panel = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.2, 0.06), suitDark);
+  panel.position.set(0, 0.36, 0.4); chest.add(panel);
+  var pled = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), basic(0x7dffa0));
+  pled.position.set(-0.08, 0.4, 0.44); chest.add(pled);
+  var pled2 = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.02), basic(0x4ad4ff));
+  pled2.position.set(0.02, 0.4, 0.44); chest.add(pled2);
+  /* hazard stripe */
+  var stripe = new THREE.Mesh(new THREE.CylinderGeometry(0.37, 0.37, 0.09, 10), accent);
+  stripe.position.y = 0.56; chest.add(stripe);
+
+  /* --- life support backpack --- */
+  var pack = new THREE.Mesh(new THREE.BoxGeometry(0.56, 0.66, 0.3), suitDark);
+  pack.position.set(0, 0.34, -0.42); chest.add(pack);
+  for (var tk = 0; tk < 2; tk++) {
+    var tank = new THREE.Mesh(new THREE.CylinderGeometry(0.11, 0.11, 0.52, 8), metal);
+    tank.position.set((tk ? 0.17 : -0.17), 0.34, -0.6); chest.add(tank);
+  }
+  var packLed = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.06, 0.03), basic(0xff8a3d));
+  packLed.position.set(0.2, 0.58, -0.56); chest.add(packLed);
+
+  /* --- helmet --- */
+  var neck = new THREE.Group(); neck.position.y = 0.78; chest.add(neck);
+  var helmet = new THREE.Mesh(new THREE.SphereGeometry(0.31, 14, 11), suit);
+  helmet.position.y = 0.2; neck.add(helmet);
+  var visor = new THREE.Mesh(new THREE.SphereGeometry(0.285, 14, 11, -0.9, 1.8, 0.5, 1.5),
+    new THREE.MeshBasicMaterial({ color: 0x122634 }));
+  visor.position.y = 0.2; visor.rotation.y = Math.PI; neck.add(visor);
+  var visorGlow = new THREE.Mesh(new THREE.SphereGeometry(0.30, 12, 9, -0.7, 1.4, 0.7, 0.9),
+    new THREE.MeshBasicMaterial({ color: 0x6fd7ff, transparent: true, opacity: 0.32 }));
+  visorGlow.position.y = 0.2; visorGlow.rotation.y = Math.PI; neck.add(visorGlow);
+  var hLamp1 = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.1, 7), basic(0xfff2c8));
+  hLamp1.rotation.x = Math.PI / 2; hLamp1.position.set(-0.24, 0.34, 0.12); neck.add(hLamp1);
+  var hLamp2 = hLamp1.clone(); hLamp2.position.x = 0.24; neck.add(hLamp2);
+  var antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.014, 0.3, 4), metal);
+  antenna.position.set(0.2, 0.5, -0.12); antenna.rotation.z = -0.35; neck.add(antenna);
+
+  /* --- arms: shoulder -> upper -> elbow -> forearm -> hand --- */
+  var arms = [];
+  for (var a = 0; a < 2; a++) {
+    var side = a ? 1 : -1;
+    var shoulder = new THREE.Group();
+    shoulder.position.set(side * 0.42, 0.58, 0);
+    chest.add(shoulder);
+    var pad = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), suit);
+    shoulder.add(pad);
+    var upper = limb(0.42, 0.11, 0.1, suit);
+    shoulder.add(upper);
+    var elbow = new THREE.Group(); elbow.position.y = -0.42; upper.add(elbow);
+    var ring = new THREE.Mesh(new THREE.TorusGeometry(0.1, 0.03, 5, 9), accent);
+    ring.rotation.x = Math.PI / 2; elbow.add(ring);
+    var fore = limb(0.4, 0.1, 0.085, suit);
+    elbow.add(fore);
+    var hand = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.16, 0.13), suitDark);
+    hand.position.y = -0.44; fore.add(hand);
+    arms.push({ shoulder: shoulder, upper: upper, elbow: elbow, fore: fore, hand: hand, side: side });
+  }
+
+  /* rifle held in both hands */
+  var heldGun = new THREE.Group();
+  var gBody = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.16, 0.86), toon(0x2b3843, 0x111820, 0.4));
+  gBody.position.z = 0.18; heldGun.add(gBody);
+  var gGrip = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.22, 0.11), suitDark);
+  gGrip.position.set(0, -0.16, 0.02); heldGun.add(gGrip);
+  var gSight = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.05), metal);
+  gSight.position.set(0, 0.12, 0.5); heldGun.add(gSight);
+  var gLed = new THREE.Mesh(new THREE.BoxGeometry(0.04, 0.04, 0.04), basic(0x6fd7ff));
+  gLed.position.set(0.08, 0.05, 0.05); heldGun.add(gLed);
+  heldGun.position.set(0.3, 0.34, 0.42);
+  chest.add(heldGun);
+
+  /* --- legs: hip -> thigh -> knee -> shin -> boot --- */
+  var legs = [];
+  for (var L = 0; L < 2; L++) {
+    var lside = L ? 1 : -1;
+    var hip = new THREE.Group();
+    hip.position.set(lside * 0.19, 0.9, 0);
+    root.add(hip);
+    var thigh = limb(0.46, 0.14, 0.12, suit);
+    hip.add(thigh);
+    var knee = new THREE.Group(); knee.position.y = -0.46; thigh.add(knee);
+    var kpad = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 6), suitDark);
+    knee.add(kpad);
+    var shin = limb(0.44, 0.12, 0.1, suit);
+    knee.add(shin);
+    var boot = new THREE.Mesh(new THREE.BoxGeometry(0.19, 0.14, 0.32), suitDark);
+    boot.position.set(0, -0.5, 0.06); shin.add(boot);
+    var sole = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.04, 0.33), accent);
+    sole.position.set(0, -0.57, 0.06); shin.add(sole);
+    legs.push({ hip: hip, thigh: thigh, knee: knee, shin: shin, boot: boot, side: lside });
+  }
+
+  /* --- first-person viewmodel (leaked on restart before this) --- */
+  if (viewGun && viewGun.parent) viewGun.parent.remove(viewGun);
+  if (headLamp) {
+    if (headLamp.parent) headLamp.parent.remove(headLamp);
+    if (headLamp.target && headLamp.target.parent) headLamp.target.parent.remove(headLamp.target);
+  }
+  viewGun = new THREE.Group();
+  var vb = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.17, 0.86), toon(0x2b3843, 0x111820, 0.5));
+  vb.position.set(0, 0, -0.42); viewGun.add(vb);
+  var vg2 = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.3, 0.16), toon(0x1d262e));
+  vg2.position.set(0, -0.19, -0.02); viewGun.add(vg2);
+  var vs = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.05), metal);
+  vs.position.set(0, 0.11, -0.72); viewGun.add(vs);
+  var vled = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), basic(0x6fd7ff));
+  vled.position.set(0.08, 0.05, -0.1); viewGun.add(vled);
+  /* a gloved hand on the viewmodel sells the suit in first person */
+  var vhand = new THREE.Mesh(new THREE.BoxGeometry(0.13, 0.15, 0.13), suitDark);
+  vhand.position.set(0, -0.14, -0.1); viewGun.add(vhand);
+  viewGun.position.set(0.24, -0.2, -0.05);
+  camera.add(viewGun);
+
+  headLamp = new THREE.SpotLight(0xbfe0ff, 1.5, 34, 0.62, 0.55, 1.6);
+  camera.add(headLamp); camera.add(headLamp.target);
+  headLamp.target.position.set(0, 0, -1);
+
   var spawn = pickSpawn(R);
   resolve(spawn, PLR_R);
   g.position.set(spawn.x, 0, spawn.z);
   world.add(g);
 
-  /* first-person viewmodel, parented to the camera */
-  viewGun = new THREE.Group();
-  var vb = new THREE.Mesh(new THREE.BoxGeometry(0.15, 0.17, 0.86), toon(0x2b3843, 0x111820, 0.5));
-  vb.position.set(0, 0, -0.42); viewGun.add(vb);
-  var vg = new THREE.Mesh(new THREE.BoxGeometry(0.11, 0.3, 0.16), toon(0x1d262e));
-  vg.position.set(0, -0.19, -0.02); viewGun.add(vg);
-  var vs = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.07, 0.05), MAT.bolt);
-  vs.position.set(0, 0.11, -0.72); viewGun.add(vs);
-  var vled = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.05, 0.05), basic(0x6fd7ff));
-  vled.position.set(0.08, 0.05, -0.1); viewGun.add(vled);
-  viewGun.position.set(0.24, -0.2, -0.05);
-  camera.add(viewGun);
+  player = {
+    g: g, root: root, chest: chest, neck: neck, arms: arms, legs: legs,
+    heldGun: heldGun, visorGlow: visorGlow,
+    pos: { x: spawn.x, z: spawn.z }, fwd: { x: 0, y: 0, z: -1 }
+  };
+}
 
-  headLamp = new THREE.SpotLight(0xbfe0ff, 1.5, 34, 0.62, 0.55, 1.6);
-  headLamp.position.set(0, 0, 0);
-  camera.add(headLamp);
-  camera.add(headLamp.target);
-  headLamp.target.position.set(0, 0, -1);
+/* full walk cycle plus aim pose, driven from the movement state */
+function animatePlayer(dt, moving, speed) {
+  var P = player;
+  if (!P || !P.legs) return;
+  var t = S.bob;
+  var amp = moving ? Math.min(1, speed / SPEED) : 0;
 
-  player = { g: g, pos: { x: spawn.x, z: spawn.z }, gun: gun, legs: legs, head: head, fwd: { x: 0, y: 0, z: -1 } };
+  for (var i = 0; i < P.legs.length; i++) {
+    var L = P.legs[i], ph = t + (i ? Math.PI : 0);
+    var swing = Math.sin(ph) * 0.62 * amp;
+    L.thigh.rotation.x = swing;
+    /* knee only bends one way, and most during the recovery half of the stride */
+    L.knee.rotation.x = Math.max(0, -Math.sin(ph - 0.7)) * 1.05 * amp;
+    L.hip.rotation.z = L.side * 0.02;
+    L.shin.rotation.x = 0;
+  }
+  for (var a = 0; a < P.arms.length; a++) {
+    var A = P.arms[a], aph = t + (a ? 0 : Math.PI);
+    if (a === 1) {
+      /* right arm holds the weapon steady regardless of gait */
+      A.shoulder.rotation.x = -1.15;
+      A.shoulder.rotation.z = -0.5;
+      A.elbow.rotation.x = 0.75;
+    } else {
+      /* left arm supports the fore-end, with a little counter-swing */
+      A.shoulder.rotation.x = -1.05 + Math.sin(aph) * 0.12 * amp;
+      A.shoulder.rotation.z = 0.72;
+      A.elbow.rotation.x = 0.95;
+    }
+  }
+  /* torso counter-rotates against the stride, and pitches with aim */
+  P.chest.rotation.y = -Math.sin(t) * 0.08 * amp;
+  P.chest.rotation.x = -S.pitch * 0.28;
+  P.neck.rotation.x = -S.pitch * 0.55;
+  P.root.position.y = Math.abs(Math.sin(t)) * 0.055 * amp;
+  P.root.rotation.z = Math.sin(t) * 0.025 * amp;
+  /* recoil kicks the whole upper body */
+  P.chest.rotation.x -= S.kick * 0.6;
+  P.visorGlow.material.opacity = 0.26 + Math.sin(performance.now() / 900) * 0.06;
 }
 
 /* ================= ENEMIES ================= */
@@ -2982,7 +3218,14 @@ function roomAt(x, z) {
   return -1;
 }
 function hotCount() { return Math.max(0, S.crystals.length - CFG.CELL_CAP); }
-function camPos() { return { x: camera.position.x, y: camera.position.y, z: camera.position.z }; }
+function camPos() {
+  if (xrOn && xrCtrl[1]) {
+    xrCtrl[1].getWorldPosition(_v);
+    return { x: _v.x, y: _v.y, z: _v.z };
+  }
+  camera.getWorldPosition(_v);
+  return { x: _v.x, y: _v.y, z: _v.z };
+}
 
 /* ================= INPUT ================= */
 var keys = {}, firing = false, charging = false, locked = false;
@@ -3036,6 +3279,7 @@ function initInput() {
   $('act').addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); doInteract(); });
   $('viewBtn').addEventListener('pointerdown', function (e) { e.preventDefault(); toggleView(); });
   $('muteBtn').addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); toggleMute(); });
+  $('vrBtn').addEventListener('click', function (e) { e.preventDefault(); enterVR(); });
 
   if (isTouch) {
     document.body.classList.add('touch');
@@ -3254,6 +3498,11 @@ function update(dt) {
   /* --- camera basis --- */
   var cp = Math.cos(S.pitch), sp = Math.sin(S.pitch), cy = Math.cos(S.yaw), sy = Math.sin(S.yaw);
   player.fwd.x = -sy * cp; player.fwd.y = sp; player.fwd.z = -cy * cp;
+  if (xrOn && xrCtrl[1]) {
+    /* shots follow the right controller, not the gaze */
+    xrCtrl[1].getWorldDirection(_dir);
+    player.fwd.x = -_dir.x; player.fwd.y = -_dir.y; player.fwd.z = -_dir.z;
+  }
   var fx = -sy, fz = -cy;              /* flat forward */
   var rx = cy, rz = -sy;               /* flat right */
 
@@ -3264,6 +3513,7 @@ function update(dt) {
   if (keys.KeyD || keys.ArrowRight) mr += 1;
   if (keys.KeyA || keys.ArrowLeft) mr -= 1;
   if (stickL.a) { mf -= stickL.y; mr += stickL.x; }
+  if (xrOn) { var xi = xrInput(dt); mf += xi.mf; mr += xi.mr; }
   var ml = Math.hypot(mf, mr);
   if (ml > 1) { mf /= ml; mr /= ml; }
   var spd = (keys.ShiftLeft || keys.ShiftRight) ? SPRINT : SPEED;
@@ -3279,10 +3529,7 @@ function update(dt) {
 
   player.g.position.set(player.pos.x, 0, player.pos.z);
   player.g.rotation.y = S.yaw + Math.PI;
-  for (var lg = 0; lg < player.legs.length; lg++) {
-    player.legs[lg].rotation.x = ml > 0.1 ? Math.sin(S.bob + lg * Math.PI) * 0.55 : 0;
-  }
-  player.head.rotation.x = -S.pitch * 0.45;
+  animatePlayer(dt, ml > 0.1, spd);
 
   /* --- firing --- */
   S.cool -= dt; S.recoil = Math.max(0, S.recoil - dt * 6); S.kick = Math.max(0, S.kick - dt * 3.4);
@@ -3599,6 +3846,19 @@ function updateCamera(dt) {
   var bobY = Math.sin(S.bob * 2) * 0.045, bobX = Math.sin(S.bob) * 0.035;
   var headX = player.pos.x, headZ = player.pos.z, headY = EYE + bobY;
 
+  if (xrOn) {
+    /* headset owns pitch, roll and eye height — we only place and yaw the rig.
+       No head bob and no camera shake in VR: both are reliable nausea triggers.
+       Any roll left over from flat play must be cleared or it persists. */
+    camera.rotation.x = 0; camera.rotation.y = 0; camera.rotation.z = 0;
+    camera.position.set(0, 0, 0);
+    S.shake = 0;
+    xrRig.position.set(headX, 0, headZ);
+    xrRig.rotation.y = S.yaw;
+    if (player) player.g.visible = false;
+    return;
+  }
+
   camera.rotation.order = 'YXZ';
   camera.rotation.y = S.yaw + (Math.random() - 0.5) * S.shake * 0.05;
   camera.rotation.x = S.pitch + S.recoil * 0.012 + (Math.random() - 0.5) * S.shake * 0.05;
@@ -3691,6 +3951,101 @@ function objective() {
   return 'KILL THE BROODMOTHER — CHARGE RIFLE ONLY, DURING THE VENT';
 }
 
+/* ================= WEBXR =================
+   The flat game drives the camera directly. In XR the headset owns the camera
+   pose, so the camera goes inside a rig and we move the rig instead. */
+function initXR() {
+  if (!navigator.xr || !renderer.xr) return;
+  renderer.xr.enabled = true;
+  navigator.xr.isSessionSupported('immersive-vr').then(function (ok) {
+    xrSupported = !!ok;
+    var b = $('vrBtn');
+    if (b) { b.style.display = ok ? 'block' : 'none'; }
+  }).catch(function () {});
+
+  for (var i = 0; i < 2; i++) {
+    var c = renderer.xr.getController(i);
+    c.userData.idx = i;
+    c.addEventListener('selectstart', function () { xrTrigger(true); });
+    c.addEventListener('selectend', function () { xrTrigger(false); });
+    c.addEventListener('squeezestart', function () { doInteract(); });
+    buildControllerModel(c, i);
+    xrCtrl.push(c);
+  }
+}
+function buildControllerModel(c, idx) {
+  var g = new THREE.Group();
+  var body = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.05, 0.16), toon(0x2b3843, 0x111820, 0.5));
+  body.position.z = -0.04; g.add(body);
+  var grip = new THREE.Mesh(new THREE.CylinderGeometry(0.024, 0.03, 0.11, 8), toon(0x1d262e));
+  grip.rotation.x = 0.5; grip.position.set(0, -0.06, 0.02); g.add(grip);
+  if (idx === 1) {
+    /* the weapon lives on the right hand in VR */
+    var barrel = new THREE.Mesh(new THREE.BoxGeometry(0.05, 0.055, 0.42), toon(0x2b3843, 0x111820, 0.5));
+    barrel.position.z = -0.24; g.add(barrel);
+    var sight = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.03, 0.02), MAT.bolt);
+    sight.position.set(0, 0.045, -0.34); g.add(sight);
+    var led = new THREE.Mesh(new THREE.BoxGeometry(0.016, 0.016, 0.016), basic(0x6fd7ff));
+    led.position.set(0.03, 0.02, -0.08); g.add(led);
+    /* a short aiming beam so you can see where the muzzle points */
+    var beam = new THREE.Mesh(new THREE.CylinderGeometry(0.0035, 0.0035, 6, 5),
+      new THREE.MeshBasicMaterial({ color: 0x6fd7ff, transparent: true, opacity: 0.28, fog: false }));
+    beam.rotation.x = Math.PI / 2; beam.position.z = -3.05; g.add(beam);
+  }
+  c.add(g);
+}
+function xrTrigger(down) {
+  if (S.wep === 2) { charging = down; if (!down) releaseCharge(); }
+  else firing = down;
+}
+/* thumbstick locomotion with snap turn; smooth turn is a comfort risk in tubes */
+function xrInput(dt) {
+  var session = renderer.xr.getSession && renderer.xr.getSession();
+  if (!session) return { mf: 0, mr: 0 };
+  var mf = 0, mr = 0;
+  xrSnapCool -= dt;
+  var sources = session.inputSources || [];
+  for (var i = 0; i < sources.length; i++) {
+    var gp = sources[i].gamepad;
+    if (!gp || !gp.axes) continue;
+    var ax = gp.axes.length > 2 ? gp.axes[2] : gp.axes[0];
+    var ay = gp.axes.length > 3 ? gp.axes[3] : gp.axes[1];
+    if (sources[i].handedness === 'left') {
+      if (Math.abs(ax) > 0.15) mr += ax;
+      if (Math.abs(ay) > 0.15) mf -= ay;
+    } else {
+      if (Math.abs(ax) > 0.7 && xrSnapCool <= 0) {
+        S.yaw -= Math.sign(ax) * Math.PI / 6;
+        xrSnapCool = 0.28;
+        blip(600, 0.05, 'sine', 0.05, 900);
+      }
+      if (gp.buttons && gp.buttons[4] && gp.buttons[4].pressed) doInteract();
+    }
+  }
+  return { mf: mf, mr: mr };
+}
+function enterVR() {
+  if (!navigator.xr) { toast('WEBXR NOT AVAILABLE IN THIS BROWSER'); return; }
+  audioInit();
+  navigator.xr.requestSession('immersive-vr', {
+    optionalFeatures: ['local-floor', 'bounded-floor']
+  }).then(function (session) {
+    renderer.xr.setSession(session);
+    xrOn = true;
+    document.body.classList.add('xr');
+    /* the headset provides eye height, so stop applying our own */
+    session.addEventListener('end', function () {
+      xrOn = false;
+      document.body.classList.remove('xr');
+      if (viewGun) viewGun.visible = firstPerson;
+    });
+    if (viewGun) viewGun.visible = false;      /* the rifle is on the controller now */
+    toast('VR ACTIVE — LEFT STICK MOVES, RIGHT STICK SNAP TURNS, TRIGGER FIRES');
+  }).catch(function (e) {
+    toast('VR SESSION REFUSED: ' + (e && e.message ? e.message : 'unknown'));
+  });
+}
+
 /* ================= LIFECYCLE ================= */
 function endGame(win, title, body) {
   if (ended) return;
@@ -3729,7 +4084,10 @@ function startGame(code) {
   scene.fog = new THREE.Fog(0x05080c, 14, 78);
   scene.add(new THREE.AmbientLight(0x2a3846, 0.7));
   scene.add(new THREE.HemisphereLight(0x3d5a72, 0x0a1119, 0.45));
-  scene.add(camera);
+  xrRig = new THREE.Group();
+  xrRig.add(camera);
+  scene.add(xrRig);
+  for (var xc = 0; xc < xrCtrl.length; xc++) xrRig.add(xrCtrl[xc]);
   if (typeof window !== 'undefined') window.__scene = scene;
 
   buildWorld();
@@ -3751,11 +4109,15 @@ function startGame(code) {
   toast('SHIP ' + ship.code + ' — CRYOBAY');
 }
 
-function loop() {
-  requestAnimationFrame(loop);
+function frame() {
   var dt = Math.min(0.05, clock.getDelta());
   update(dt);
   if (scene && camera) renderer.render(scene, camera);
+}
+function loop() {
+  /* setAnimationLoop drives both the flat page and the headset, so the XR
+     session does not need a separate loop */
+  renderer.setAnimationLoop(frame);
 }
 
 function init() {
@@ -3777,6 +4139,7 @@ function init() {
   });
 
   initInput();
+  initXR();
 
   var seedRnd = CW.rng((Date.now() ^ 0x9e3779b9) >>> 0);
   $('codeIn').value = CW.makeCode(seedRnd);
@@ -3813,7 +4176,10 @@ window.__CW = {
   snapshotAudio: function () { if (AC && AC._snapshot) AC._snapshot(); },
   get audioReady() { return audioReady; },
   get sky() { return sky; }, get exterior() { return exterior; }, get asteroids() { return asteroids; },
-  windowsOf: function (r) { return windowGaps(ship.rooms[r]); }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
+  windowsOf: function (r) { return windowGaps(ship.rooms[r]); },
+  get xr() { return { on: xrOn, rig: xrRig, controllers: xrCtrl, supported: xrSupported }; },
+  setXR: function (v) { xrOn = v; },
+  get playerRig() { return player; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
   hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, rayWorld: rayWorld, PLR_R: PLR_R,
   start: function (c) { startGame(c); }, hurt: function (d) { hurtPlayer(d); },
   give: function (k, n) { S[k] = n; }, setKey: function (k) { S.keys[k] = true; openDoors(); },
