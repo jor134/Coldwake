@@ -118,7 +118,8 @@ body.xr #hud{display:none}
 #reviveF{height:100%;width:0;background:linear-gradient(90deg,#ff5a4a,#ffd08a);box-shadow:0 0 10px #ff6a4a}
 #reviveT{font-size:9px;letter-spacing:.18em;color:#ffb8a0;margin-top:6px}
 #coop{margin-top:14px;width:min(460px,90vw);text-align:left;display:none}
-#coop textarea{width:100%;height:52px;background:#060d14;border:1px solid #253c4d;color:#9fe8ff;font-family:inherit;font-size:9px;letter-spacing:.04em;padding:7px;border-radius:3px;resize:none}
+#roomIn{background:#060d14;border:1px solid #253c4d;color:#9fe8ff;font-family:inherit;font-size:16px;letter-spacing:.34em;padding:10px 12px;text-align:center;width:180px;text-transform:uppercase;border-radius:3px}
+#roomOut{font-size:26px;letter-spacing:.4em;color:#9fe8ff;margin-top:4px;text-shadow:0 0 16px rgba(90,190,255,.4)}
 #coop label{display:block;font-size:8px;letter-spacing:.22em;color:#4f7690;margin:9px 0 4px}
 #coopStatus{font-size:9px;letter-spacing:.14em;color:#6f93ab;margin-top:8px;min-height:12px;text-align:center}
 #coopSteps{font-size:9px;letter-spacing:.1em;color:#4f7690;line-height:1.9;margin-top:10px}
@@ -197,7 +198,7 @@ body.xr #hud{display:none}
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 14</div>
+  <div class="sub">VERTICAL SLICE · BUILD 15</div>
   <p>You wake in a failed cryopod aboard the colony transport <em style="color:#9fe8ff;font-style:normal;letter-spacing:.12em">COLDWAKE</em>, drifting dark. The crew is gone. Something is nesting in the ship.</p>
   <p style="font-size:11px;letter-spacing:.16em;color:#6f93ab">RESTORE THE REACTOR · RESTORE THE DRIVE · RESTORE NAVIGATION · BURN FOR EARTH</p>
   <p style="font-size:10px;color:#5f7f96;margin-bottom:14px">HEADPHONES RECOMMENDED — THE SCORE REACTS TO WHAT IS HUNTING YOU</p>
@@ -212,21 +213,24 @@ body.xr #hud{display:none}
   </div>
   <div id="coop">
     <div id="coopSteps">
-      <b>HOST:</b> press CREATE INVITE, send the code to your friend, paste their reply, press CONNECT.<br>
-      <b>JOIN:</b> paste your friend's invite, press JOIN, send the reply code back to them.
+      <b>HOST:</b> press OPEN ROOM and read your friend the 6-character code.<br>
+      <b>JOIN:</b> type their code and press JOIN. No copying long text.
     </div>
-    <label>PASTE A CODE FROM YOUR FRIEND</label>
-    <textarea id="coopIn" placeholder="CW3:…" spellcheck="false"></textarea>
-    <label>YOUR CODE — SEND THIS TO THEM</label>
-    <textarea id="coopOut" readonly placeholder="your code appears here"></textarea>
+    <div style="text-align:center;margin-top:12px">
+      <input id="roomIn" placeholder="ROOM CODE" maxlength="8" autocomplete="off" spellcheck="false">
+    </div>
     <div style="text-align:center;margin-top:10px">
-      <button class="btn ghost" id="btnCoopHost">CREATE INVITE</button>
+      <button class="btn ghost" id="btnCoopHost">OPEN ROOM</button>
       <button class="btn ghost" id="btnCoopJoin">JOIN</button>
-      <button class="btn ghost" id="btnCoopAccept">CONNECT</button>
+      <button class="btn ghost" id="btnCoopLeave">LEAVE</button>
+    </div>
+    <div id="roomBox" style="display:none;text-align:center;margin-top:12px">
+      <div style="font-size:8px;letter-spacing:.24em;color:#4f7690">ROOM CODE</div>
+      <div id="roomOut"></div>
     </div>
     <div id="coopStatus"></div>
   </div>
-  <div class="hint">
+<div class="hint">
     EVERY SHIP CODE GENERATES A DIFFERENT VESSEL<br>
     DESKTOP — CLICK TO LOCK MOUSE · WASD MOVE · MOUSE LOOK · LMB FIRE · RMB CHARGE RIFLE<br>
     E INTERACT · 1/2/3 WEAPONS · R FIELD-CHARGE RIFLE · V VIEW · M SOUND · SHIFT SPRINT<br>
@@ -984,6 +988,103 @@ CW.reviveStep = function (st, dt, ctx) {
   st.t += dt;
   if (st.t >= CW.REVIVE_TIME) { st.t = 0; st.bleed = 0; return { done: true, progress: 1 }; }
   return { done: false, progress: st.t / CW.REVIVE_TIME, bleed: st.bleed };
+};
+
+/* ---------- KV RELAY ----------
+   Room codes instead of pasted SDP blobs. Upstash carries the handshake, and
+   also acts as a full fallback transport if the peer connection never forms —
+   which is the usual reason a copy-paste handshake "works" and then does
+   nothing. All the addressing, cursor and batching logic lives here so it can
+   be tested without a network. */
+
+CW.ROOM_LEN = 6;
+CW.RELAY_TTL = 7200;             /* seconds a room survives */
+CW.RELAY_POLL_FAST = 0.14;       /* signalling / fallback transport */
+CW.RELAY_POLL_IDLE = 0.6;        /* waiting in a lobby */
+CW.RTC_TIMEOUT = 12;             /* give the peer connection this long, then relay */
+
+CW.makeRoom = function (rnd) {
+  var r = rnd || Math.random, s = '';
+  for (var i = 0; i < CW.ROOM_LEN; i++) s += CW.CODE_CHARS[Math.floor(r() * CW.CODE_CHARS.length)];
+  return s;
+};
+CW.normRoom = function (c) {
+  return String(c || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, CW.ROOM_LEN);
+};
+
+/* one list per direction, so neither side ever reads its own writes */
+CW.relayKey = function (room, side) { return 'cw:' + CW.normRoom(room) + ':' + side; };
+CW.otherSide = function (side) { return side === 'h' ? 'c' : 'h'; };
+
+/* Upstash REST pipeline body for sending a batch and reading the inbox in one
+   round trip — halves the request count, which matters for quota */
+CW.relayPipeline = function (room, side, outbox, cursor) {
+  var cmds = [];
+  for (var i = 0; i < outbox.length; i++) {
+    cmds.push(['RPUSH', CW.relayKey(room, side), outbox[i]]);
+  }
+  if (outbox.length) cmds.push(['EXPIRE', CW.relayKey(room, side), String(CW.RELAY_TTL)]);
+  cmds.push(['LRANGE', CW.relayKey(room, CW.otherSide(side)), String(cursor), '-1']);
+  return cmds;
+};
+
+/* the LRANGE result is always the last entry in the pipeline response */
+CW.relayParse = function (res) {
+  if (!res) return { msgs: [], ok: false };
+  var arr = Array.isArray(res) ? res : [res];
+  var last = arr[arr.length - 1];
+  var raw = last && last.result !== undefined ? last.result : last;
+  if (!Array.isArray(raw)) return { msgs: [], ok: false };
+  var out = [];
+  for (var i = 0; i < raw.length; i++) {
+    var v = raw[i];
+    if (typeof v !== 'string') continue;
+    try { out.push(JSON.parse(v)); } catch (e) { /* skip a corrupt entry */ }
+  }
+  return { msgs: out, ok: true, count: raw.length };
+};
+
+/* batching: gameplay is lossy, so only the newest avatar/snapshot is worth
+   sending. Actions are reliable and must all go. */
+CW.relayBatch = function (queue, max) {
+  var keepLatest = { A: null, S: null }, others = [];
+  for (var i = 0; i < queue.length; i++) {
+    var m = queue[i];
+    if (m && (m[0] === 'A' || m[0] === 'S')) keepLatest[m[0]] = m;
+    else others.push(m);
+  }
+  var out = others.slice(-(max || 12));
+  if (keepLatest.A) out.push(keepLatest.A);
+  if (keepLatest.S) out.push(keepLatest.S);
+  return out;
+};
+
+/* lobby handshake state machine, independent of transport */
+CW.newLobby = function (side) {
+  return { side: side, state: 'IDLE', t: 0, rtcT: 0, peerSeen: false, offered: false, answered: false };
+};
+CW.lobbyStep = function (lb, dt, ev) {
+  ev = ev || {};
+  lb.t += dt;
+  if (lb.state === 'CONNECTED') return lb;
+
+  if (ev.peerHello) lb.peerSeen = true;
+  if (ev.rtcOpen) { lb.state = 'CONNECTED'; lb.via = 'rtc'; return lb; }
+
+  if (lb.state === 'IDLE') { lb.state = 'WAITING'; lb.t = 0; lb.rtcT = 0; return lb; }
+
+  if (lb.state === 'WAITING') {
+    if (lb.peerSeen) { lb.state = 'NEGOTIATING'; lb.rtcT = 0; }
+    return lb;
+  }
+  if (lb.state === 'NEGOTIATING') {
+    lb.rtcT += dt;
+    /* the peer connection gets a fair chance; after that the relay carries the
+       game so a strict NAT never blocks play entirely */
+    if (lb.rtcT >= CW.RTC_TIMEOUT) { lb.state = 'CONNECTED'; lb.via = 'relay'; }
+    return lb;
+  }
+  return lb;
 };
 
 CW.BOSS_STATES = ['DORMANT', 'AGGRESSIVE', 'ARMORED', 'VENT', 'STAGGER', 'DEAD', 'FLED'];
@@ -3485,13 +3586,13 @@ function hitscan(dmg, spreadDeg) {
     o.x + dx * bestT, o.y + dy * bestT, o.z + dz * bestT);
   if (bestE >= 0) {
     var E = enemies[bestE];
-    if (netIsClient() && E.remote) { netSend(CW.encAction('hit', E.netId, dmg)); E.flash = 0.12; }
+    if (netIsClient() && E.remote) { netSendAny(CW.encAction('hit', E.netId, dmg)); E.flash = 0.12; }
     else E.hp -= dmg;
     E.flash = 0.12; SFX.hit(E.pos.x, E.pos.z);
     burst(E.pos.x, E.T.hy, E.pos.z, 0xffaa66);
     if (E.hp <= 0) killEnemy(E, bestE);
   } else if (bestE === -2) {
-    if (netIsClient()) netSend(CW.encAction('boss', 0, dmg));
+    if (netIsClient()) netSendAny(CW.encAction('boss', 0, dmg));
     else boss._dmg = (boss._dmg || 0) + dmg;
     burst(bossMesh.x + (Math.random() - .5) * 4, 3, bossMesh.z + (Math.random() - .5) * 4, 0xff8866);
     SFX.hit(bossMesh.x, bossMesh.z);
@@ -3530,7 +3631,7 @@ function fireBeam() {
     var bt = raySphere(o.x, o.y, o.z, f.x, f.y, f.z, bossMesh.x, 2.8, bossMesh.z, bossMesh.r * 1.15);
     if (bt >= 0 && bt < wallT) {
       if (boss.state === 'VENT') {
-        if (netIsClient()) netSend(CW.encAction('boss', 1, 0)); else boss._charged = true;
+        if (netIsClient()) netSendAny(CW.encAction('boss', 1, 0)); else boss._charged = true;
         SFX.vent(); toast('ARMOUR PLATE BREACHED');
       }
       else toast('CARAPACE HELD — HIT IT DURING THE VENT');
@@ -3670,7 +3771,7 @@ function initInput() {
   });
   $('btnCoopHost').addEventListener('click', function () { audioInit(); coopHost(); });
   $('btnCoopJoin').addEventListener('click', function () { audioInit(); coopJoin(); });
-  $('btnCoopAccept').addEventListener('click', function () { audioInit(); coopAccept(); });
+  $('btnCoopLeave').addEventListener('click', function () { audioInit(); coopLeave(); });
   var fb = $('fieldBtn');
   fb.addEventListener('pointerdown', function (e) { e.preventDefault(); audioInit(); S.fieldBtn = true; });
   fb.addEventListener('pointerup', function (e) { e.preventDefault(); S.fieldBtn = false; });
@@ -3818,7 +3919,7 @@ function doInteract() {
     S.keys[o.node.id] = true;
     o.core.material.color.setHex(0x7dffa0); o.col.material.emissive.setHex(0x2bff7a);
     SFX.repair(); openDoors();
-    if (netActive()) netSend(CW.encAction('node', nodeObjs.indexOf(o)));
+    if (netActive()) netSendAny(CW.encAction('node', nodeObjs.indexOf(o)));
     if (o.node.id === 'N0') toast('EMERGENCY LIGHTING RESTORED — BLAST DOORS RESPOND');
     if (o.node.id === 'N1') toast('ATMOSPHERE SCRUBBER ONLINE — O2 STABLE');
     if (o.node.id === 'N2') { S.powerT1 = true; SFX.power(); endGame(true); }
@@ -3826,7 +3927,7 @@ function doInteract() {
   }
   if (o.kind === 'crystal') {
     o.taken = true; o.g.visible = false;
-    if (netActive()) netSend(CW.encAction('take', pickups.indexOf(o)));
+    if (netActive()) netSendAny(CW.encAction('take', pickups.indexOf(o)));
     S.crystals.push({ t: 0 }); S.hotEver = true;
     SFX.crystal();
     var was = S.alert; S.alert = CW.alertFromHot(hotCount());
@@ -4209,7 +4310,7 @@ function update(dt) {
     }
     if (near) {
       K.taken = true; K.g.visible = false;
-      if (netActive()) netSend(CW.encAction('take', pk));
+      if (netActive()) netSendAny(CW.encAction('take', pk));
       if (K.kind === 'mesh') S.mesh++; else S.scrap++;
       SFX.pick();
     }
@@ -4249,6 +4350,8 @@ function update(dt) {
   }
 
   introTick(dt);
+  relayTick(dt);
+  lobbyTick(dt);
   netTick(dt);
   reviveTick(dt);
   fieldChargeTick(dt);
@@ -4845,14 +4948,20 @@ function netTick(dt) {
   net.lastRx += dt;
   if (net.connected && net.lastRx > 8) {
     net.connected = false;
-    coopStatus('LINK TIMED OUT', false);
+    if (relay.lobby && relay.lobby.state === 'CONNECTED') {
+      /* drop back to the lobby rather than sitting in a contradictory state */
+      relay.lobby.state = 'WAITING';
+      relay.lobby.peerSeen = false;
+      relay.lobby.rtcT = 0;
+    }
+    coopStatus(relay.room ? 'CREWMATE WENT QUIET — WAITING' : 'LINK TIMED OUT', false);
   }
   if (!net.connected) return;
 
   net.sendAcc += dt;
   if (net.sendAcc >= 1 / CW.NET_AVATAR_HZ) {
     net.sendAcc = 0;
-    netSend(CW.encAvatar({
+    netSendAny(CW.encAvatar({
       x: player.pos.x, z: player.pos.z, yaw: S.yaw, pitch: S.pitch,
       wep: S.wep, hp: S.hp, moving: S.movingNow, down: !!S.down,
       charges: S.charges, name: net.myName
@@ -4860,7 +4969,7 @@ function netTick(dt) {
   }
   if (netIsHost()) {
     net.snapAcc += dt;
-    if (net.snapAcc >= 1 / CW.NET_SNAPSHOT_HZ) { net.snapAcc = 0; netSend(hostSnapshot()); }
+    if (net.snapAcc >= 1 / CW.NET_SNAPSHOT_HZ) { net.snapAcc = 0; netSendAny(hostSnapshot()); }
   }
   updatePeers(dt);
 }
@@ -4909,55 +5018,196 @@ function reviveTick(dt) {
     q.revT = (q.revT || 0) + dt;
     if (q.revT >= CW.REVIVE_TIME) {
       q.revT = 0;
-      netSend(CW.encAction('revive', 1));
+      netSendAny(CW.encAction('revive', 1));
       toast('CREWMATE REVIVED');
     }
   }
 }
 
-/* ---- handshake UI ---- */
+/* ---- relay transport ----
+   Room code in, room code out. Upstash carries the handshake, and carries the
+   whole game if the peer connection never forms. */
+var relay = {
+  room: '', side: 'h', cursor: 0, acc: 0, out: [], busy: false,
+  lobby: null, via: '', fails: 0, lastErr: '', reqs: 0
+};
+
+/* Endpoint resolution. Preferred: a same-origin proxy so the Upstash token
+   stays server-side. Direct mode is offered only as a fallback for local
+   testing, and warns, because a token in client HTML is public. */
+var RELAY_CFG = (typeof window !== 'undefined' && window.COLDWAKE_RELAY) || {
+  proxy: '/api/relay',
+  url: '',        /* https://<id>.upstash.io  — only for local testing */
+  token: ''       /* leaving this blank keeps the proxy path */
+};
+
+function relayEndpoint() {
+  if (RELAY_CFG.url && RELAY_CFG.token) return { mode: 'direct', url: RELAY_CFG.url + '/pipeline', token: RELAY_CFG.token };
+  return { mode: 'proxy', url: RELAY_CFG.proxy, token: '' };
+}
+
+function relayPost(cmds) {
+  var ep = relayEndpoint();
+  var headers = { 'Content-Type': 'application/json' };
+  if (ep.mode === 'direct') headers['Authorization'] = 'Bearer ' + ep.token;
+  return fetch(ep.url, { method: 'POST', headers: headers, body: JSON.stringify(cmds) })
+    .then(function (r) {
+      if (!r.ok) throw new Error('relay HTTP ' + r.status);
+      return r.json();
+    });
+}
+
+function relayTick(dt) {
+  if (!relay.room) return;
+  relay.acc += dt;
+  var interval = (relay.lobby && relay.lobby.state === 'CONNECTED' && relay.via === 'rtc')
+    ? CW.RELAY_POLL_IDLE                     /* p2p carries the game; just keep the room warm */
+    : (net.connected ? CW.RELAY_POLL_FAST : CW.RELAY_POLL_FAST);
+  if (relay.acc < interval || relay.busy) return;
+  relay.acc = 0;
+  relay.busy = true;
+
+  var batch = CW.relayBatch(relay.out, 12);
+  relay.out = [];
+  var payload = [];
+  for (var i = 0; i < batch.length; i++) payload.push(JSON.stringify(batch[i]));
+
+  relay.reqs++;
+  relayPost(CW.relayPipeline(relay.room, relay.side, payload, relay.cursor))
+    .then(function (res) {
+      relay.busy = false;
+      relay.fails = 0;
+      var p = CW.relayParse(res);
+      if (!p.ok) return;
+      relay.cursor += p.count;
+      for (var k = 0; k < p.msgs.length; k++) relayReceive(p.msgs[k]);
+    })
+    .catch(function (e) {
+      relay.busy = false;
+      relay.fails++;
+      relay.lastErr = e && e.message ? e.message : 'unknown';
+      if (relay.fails === 3) coopStatus('RELAY UNREACHABLE — ' + relay.lastErr, false);
+      if (relay.fails > 40) { relay.room = ''; coopStatus('RELAY GAVE UP', false); }
+    });
+}
+
+function relayReceive(m) {
+  if (!m || !m.length) return;
+  /* anything arriving from the peer counts as liveness, including the
+     heartbeat — otherwise a quiet but present crewmate gets dropped */
+  net.lastRx = 0;
+  if (m[0] === 'HELLO') {
+    if (relay.lobby) relay.lobby.peerSeen = true;
+    if (net.mode === 'host' && !relay.offered) startRTCOffer();
+    return;
+  }
+  if (m[0] === 'SDP') {
+    handleRemoteSDP(m[1], m[2]);
+    return;
+  }
+  /* gameplay traffic arriving over the relay lane */
+  net.lastRx = 0;
+  netHandle(m);
+}
+
+function relaySend(msg) { if (relay.room) relay.out.push(msg); }
+
+/* ---- peer connection, signalled over the relay ---- */
+function startRTCOffer() {
+  relay.offered = true;
+  try { net.pc = new RTCPeerConnection(netRTCConfig()); } catch (e) { return; }
+  var ch = net.pc.createDataChannel('cw', { ordered: false, maxRetransmits: 0 });
+  netAttachChannel(ch);
+  net.pc.createOffer().then(function (o) { return net.pc.setLocalDescription(o); })
+    .then(function () { return withIce(net.pc); })
+    .then(function () { relaySend(['SDP', 'offer', net.pc.localDescription.sdp]); })
+    .catch(function () { /* the relay lane still carries the game */ });
+}
+function handleRemoteSDP(kind, sdp) {
+  if (kind === 'offer' && net.mode === 'client') {
+    try { net.pc = new RTCPeerConnection(netRTCConfig()); } catch (e) { return; }
+    net.pc.ondatachannel = function (ev) { netAttachChannel(ev.channel); };
+    net.pc.setRemoteDescription({ type: 'offer', sdp: sdp })
+      .then(function () { return net.pc.createAnswer(); })
+      .then(function (a) { return net.pc.setLocalDescription(a); })
+      .then(function () { return withIce(net.pc); })
+      .then(function () { relaySend(['SDP', 'answer', net.pc.localDescription.sdp]); })
+      .catch(function () {});
+  } else if (kind === 'answer' && net.mode === 'host' && net.pc) {
+    net.pc.setRemoteDescription({ type: 'answer', sdp: sdp }).catch(function () {});
+  }
+}
+
+/* ---- lobby ---- */
+function lobbyTick(dt) {
+  if (!relay.lobby) return;
+  var prev = relay.lobby.state;
+  CW.lobbyStep(relay.lobby, dt, { rtcOpen: net.ch && net.ch.readyState === 'open' });
+  var lb = relay.lobby;
+  if (lb.state !== prev) {
+    if (lb.state === 'NEGOTIATING') coopStatus('CREWMATE FOUND — LINKING…', true);
+    if (lb.state === 'CONNECTED') {
+      relay.via = lb.via;
+      net.connected = true;
+      /* the liveness timer runs during the lobby too, so it must be cleared on
+         connect or the link "times out" the instant it comes up */
+      net.lastRx = 0;
+      coopStatus(lb.via === 'rtc' ? 'LINKED PEER-TO-PEER' : 'LINKED VIA RELAY (higher latency)', true);
+      toast(lb.via === 'rtc' ? 'CREWMATE ABOARD' : 'CREWMATE ABOARD — RELAY LINK');
+      SFX.power();
+      if (net.mode === 'host') netSend(['H', ship.code, S.phase]);
+    }
+  }
+  /* heartbeat so the other side knows we exist */
+  relay.hb = (relay.hb || 0) - dt;
+  if (relay.hb <= 0) { relay.hb = 1.0; relaySend(['HELLO', net.mode]); }
+}
+
+/* every outbound message goes p2p when available, relay otherwise */
+function netSendAny(msg) {
+  if (net.ch && net.ch.readyState === 'open') netSend(msg);
+  else relaySend(msg);
+}
+
 function coopStatus(txt, good) {
   var el = $('coopStatus');
   if (!el) return;
   el.textContent = txt;
   el.style.color = good ? '#7dffa0' : '#ff9d6b';
 }
+
 function coopHost() {
+  relay.room = CW.makeRoom();
+  relay.side = 'h'; relay.cursor = 0; relay.out = []; relay.offered = false;
   net.mode = 'host';
-  coopStatus('CREATING INVITE…', true);
-  try { net.pc = new RTCPeerConnection(netRTCConfig()); } catch (e) { coopStatus('WEBRTC UNAVAILABLE', false); return; }
-  var ch = net.pc.createDataChannel('cw', { ordered: false, maxRetransmits: 0 });
-  netAttachChannel(ch);
-  net.pc.createOffer().then(function (o) { return net.pc.setLocalDescription(o); })
-    .then(function () { return withIce(net.pc); })
-    .then(function () {
-      $('coopOut').value = CW.packSignal({ t: 'offer', sdp: net.pc.localDescription.sdp });
-      coopStatus('SEND THIS INVITE, THEN PASTE THEIR REPLY BELOW', true);
-    }).catch(function (e) { coopStatus('INVITE FAILED: ' + e.message, false); });
+  relay.lobby = CW.newLobby('h');
+  CW.lobbyStep(relay.lobby, 0, {});
+  $('roomOut').textContent = relay.room;
+  $('roomBox').style.display = 'block';
+  coopStatus('ROOM OPEN — GIVE YOUR FRIEND THIS CODE', true);
+  relaySend(['HELLO', 'host']);
 }
 function coopJoin() {
-  var sig = CW.unpackSignal($('coopIn').value);
-  if (!sig || sig.error) { coopStatus('THAT INVITE CODE IS NOT VALID', false); return; }
+  var room = CW.normRoom($('roomIn').value);
+  if (room.length !== CW.ROOM_LEN) { coopStatus('ENTER THE ' + CW.ROOM_LEN + '-CHARACTER ROOM CODE', false); return; }
+  relay.room = room;
+  relay.side = 'c'; relay.cursor = 0; relay.out = []; relay.offered = false;
   net.mode = 'client';
-  coopStatus('BUILDING REPLY…', true);
-  try { net.pc = new RTCPeerConnection(netRTCConfig()); } catch (e) { coopStatus('WEBRTC UNAVAILABLE', false); return; }
-  net.pc.ondatachannel = function (ev) { netAttachChannel(ev.channel); };
-  net.pc.setRemoteDescription({ type: 'offer', sdp: sig.sdp })
-    .then(function () { return net.pc.createAnswer(); })
-    .then(function (a) { return net.pc.setLocalDescription(a); })
-    .then(function () { return withIce(net.pc); })
-    .then(function () {
-      $('coopOut').value = CW.packSignal({ t: 'answer', sdp: net.pc.localDescription.sdp });
-      coopStatus('SEND THIS REPLY BACK TO THE HOST', true);
-    }).catch(function (e) { coopStatus('REPLY FAILED: ' + e.message, false); });
+  relay.lobby = CW.newLobby('c');
+  CW.lobbyStep(relay.lobby, 0, {});
+  $('roomOut').textContent = room;
+  $('roomBox').style.display = 'block';
+  coopStatus('JOINING ' + room + '…', true);
+  relaySend(['HELLO', 'client']);
 }
-function coopAccept() {
-  var sig = CW.unpackSignal($('coopIn').value);
-  if (!sig || sig.error) { coopStatus('THAT REPLY CODE IS NOT VALID', false); return; }
-  if (!net.pc) { coopStatus('CREATE AN INVITE FIRST', false); return; }
-  net.pc.setRemoteDescription({ type: 'answer', sdp: sig.sdp })
-    .then(function () { coopStatus('CONNECTING…', true); })
-    .catch(function (e) { coopStatus('COULD NOT CONNECT: ' + e.message, false); });
+function coopLeave() {
+  relay.room = ''; relay.lobby = null; relay.via = '';
+  net.mode = 'solo'; net.connected = false;
+  if (net.pc) { try { net.pc.close(); } catch (e) {} net.pc = null; }
+  net.ch = null;
+  for (var id in net.peers) removePeer(id);
+  $('roomBox').style.display = 'none';
+  coopStatus('LEFT THE ROOM', false);
 }
 
 /* ================= INTRO =================
@@ -5148,6 +5398,8 @@ window.__CW = {
   netHandle: function (m) { netHandle(m); },
   hostSnapshot: function () { return hostSnapshot(); },
   setNetMode: function (m) { net.mode = m; net.connected = m !== 'solo'; },
+  get relay() { return relay; },
+  relayReceive: function (m) { relayReceive(m); },
   endIntro: function () { endIntro(); },
   setField: function (v) { S.fieldBtn = v; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
   hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, rayWorld: rayWorld, PLR_R: PLR_R,
