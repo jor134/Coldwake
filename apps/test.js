@@ -296,11 +296,11 @@ t('6.3 spawn multiplier rises with alert', function () {
   return true;
 });
 t('6.4 crystals beyond cell capacity decay and shatter', function () {
-  var list = [];
-  for (var i = 0; i < 5; i++) list.push({ t: 0 });
+  var extra = 2, n = CW.CFG.CELL_CAP + extra, list = [];
+  for (var i = 0; i < n; i++) list.push({ t: 0 });
   var r = { crystals: list, shattered: 0 }, total = 0;
   for (var s = 0; s < 300; s++) { r = CW.stepCrystals(r.crystals, 1, CW.CFG.CELL_CAP); total += r.shattered; }
-  return (r.crystals.length === CW.CFG.CELL_CAP && total === 3) || 'left ' + r.crystals.length + ' shattered ' + total;
+  return (r.crystals.length === CW.CFG.CELL_CAP && total === extra) || 'left ' + r.crystals.length + ' shattered ' + total;
 });
 t('6.5 crystals inside cell capacity never shatter', function () {
   var list = [{ t: 0 }, { t: 0 }], r = { crystals: list };
@@ -712,6 +712,68 @@ t('12.13 alert raises wave feed rate but never to zero interval', function () {
   var slow = CW.waveInterval(2, 0), fast = CW.waveInterval(2, 3);
   if (!(fast < slow)) return 'alert does not speed up the feed';
   return fast > 0.2 || 'interval collapsed to ' + fast;
+});
+
+
+/* ============ 13. FIELD CHARGING ============ */
+t('13.1 containment cell can hold a full rifle load', function () {
+  return CW.CFG.CELL_CAP >= CW.CFG.RIFLE_CAP ||
+    'cell holds ' + CW.CFG.CELL_CAP + ' but the rifle takes ' + CW.CFG.RIFLE_CAP;
+});
+t('13.2 a full rifle load survives the walk to the boss', function () {
+  var list = [];
+  for (var i = 0; i < CW.CFG.RIFLE_CAP; i++) list.push({ t: 0 });
+  var r = { crystals: list };
+  for (var s2 = 0; s2 < 600; s2++) r = CW.stepCrystals(r.crystals, 1, CW.CFG.CELL_CAP);
+  return r.crystals.length === CW.CFG.RIFLE_CAP || 'lost ' + (CW.CFG.RIFLE_CAP - r.crystals.length) + ' crystals in transit';
+});
+t('13.3 field charge completes in the configured time', function () {
+  var fc = CW.newFieldCharge(), t2 = 0, done = false;
+  while (t2 < 20 && !done) {
+    var r = CW.fieldChargeStep(fc, 0.05, { holding: true, hasCrystal: true });
+    t2 += 0.05; done = r.done;
+  }
+  return Math.abs(t2 - CW.CFG.FIELD_CHARGE) < 0.2 || 'completed at ' + t2.toFixed(2) + 's';
+});
+t('13.4 releasing the button cancels the channel', function () {
+  var fc = CW.newFieldCharge();
+  for (var i = 0; i < 20; i++) CW.fieldChargeStep(fc, 0.05, { holding: true, hasCrystal: true });
+  var r = CW.fieldChargeStep(fc, 0.05, { holding: false, hasCrystal: true });
+  if (!r.cancelled) return 'release did not cancel';
+  return fc.t === 0 || 'progress not reset';
+});
+t('13.5 taking a hit breaks the channel and locks it out briefly', function () {
+  var fc = CW.newFieldCharge();
+  for (var i = 0; i < 40; i++) CW.fieldChargeStep(fc, 0.05, { holding: true, hasCrystal: true });
+  var r = CW.fieldChargeStep(fc, 0.05, { holding: true, hasCrystal: true, hurtSince: true });
+  if (!r.cancelled || fc.t !== 0) return 'a hit did not interrupt charging';
+  /* the channel must not simply resume on the next frame, or being hit is free */
+  var resumed = 0;
+  for (var j = 0; j < 10; j++) {
+    var r2 = CW.fieldChargeStep(fc, 0.05, { holding: true, hasCrystal: true });
+    if (r2.progress > 0) resumed++;
+  }
+  if (resumed) return 'the channel resumed immediately after a hit';
+  /* but it must recover eventually */
+  for (var k = 0; k < 60; k++) CW.fieldChargeStep(fc, 0.05, { holding: true, hasCrystal: true });
+  return fc.active || 'the channel never recovered after the lockout';
+});
+t('13.6 cannot field charge without a crystal or with a full rifle', function () {
+  var fc = CW.newFieldCharge();
+  var a = CW.fieldChargeStep(fc, 1, { holding: true, hasCrystal: false });
+  if (a.done) return 'charged with no crystal';
+  var b = CW.fieldChargeStep(fc, 1, { holding: true, hasCrystal: true, rifleFull: true });
+  return !b.done || 'charged a full rifle';
+});
+t('13.7 progress rises monotonically to exactly 1', function () {
+  var fc = CW.newFieldCharge(), last = -1;
+  for (var i = 0; i < 200; i++) {
+    var r = CW.fieldChargeStep(fc, 0.05, { holding: true, hasCrystal: true });
+    if (r.done) return r.progress === 1 || 'finished at progress ' + r.progress;
+    if (r.progress < last) return 'progress went backwards';
+    last = r.progress;
+  }
+  return 'never completed';
 });
 
 console.log('\n' + log.join('\n'));

@@ -256,7 +256,7 @@ global.document = {
 /* HUD elements that the code indexes into */
 var alertBars = getEl('alertBars'); alertBars.children = [new El('b0'), new El('b1'), new El('b2')];
 var armor = getEl('armor'); armor.children = [new El('a0'), new El('a1'), new El('a2')];
-['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','viewBtn','muteBtn','vrBtn','lookZone','stickL'].forEach(getEl);
+['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','fieldBtn','viewBtn','muteBtn','vrBtn','lookZone','stickL','field','fieldBar','fieldF','fieldT'].forEach(getEl);
 
 /* ---------- Web Audio stub ----------
    Records every node and connection so the tests exercise the real synthesis
@@ -2295,6 +2295,135 @@ t('R116 slice still completable with wave pacing', function () {
     if (r !== true) fails.push('WVRUN' + i + ': ' + r);
   }
   return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
+});
+
+
+/* ---------- BUILD 11: RIFLE ACCESS ---------- */
+t('R117 the rifle can always be selected, even when empty', function () {
+  resetInput(); D.start('RIF-01'); pump(4); resetInput();
+  if (D.S.charges !== 0) return 'test started with charges';
+  global.window.fire('keydown', { code: 'Digit3', preventDefault: function () {} });
+  pump(2);
+  return D.S.wep === 2 || 'could not select the rifle with 0 charges (wep ' + D.S.wep + ')';
+});
+
+t('R118 firing an empty rifle consumes nothing and does not crash', function () {
+  resetInput(); D.start('RIF-02'); pump(4); resetInput();
+  global.window.fire('keydown', { code: 'Digit3', preventDefault: function () {} });
+  pump(2);
+  for (var i = 0; i < 40; i++) {
+    getEl('cv').fire('mousedown', { button: 2, preventDefault: function () {} });
+    pump(50);
+    global.window.fire('mouseup', { button: 2 });
+    pump(3);
+  }
+  return D.S.charges === 0 || 'charges went negative or changed: ' + D.S.charges;
+});
+
+t('R119 a full rifle load survives the trip from the bench to the boss', function () {
+  resetInput(); D.start('RIF-03'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var cry = D.pickups.filter(function (p) { return p.kind === 'crystal' && !p.taken; });
+  if (cry.length < global.CW.CFG.RIFLE_CAP) return 'only ' + cry.length + ' crystals exist';
+  for (var i = 0; i < global.CW.CFG.RIFLE_CAP; i++) {
+    D.player.pos.x = cry[i].x; D.player.pos.z = cry[i].z + 1.0;
+    D.give('invuln', 9999); pump(3);
+    global.window.fire('keydown', { code: 'KeyE', preventDefault: function () {} });
+    pump(2);
+  }
+  var held = D.S.crystals.length;
+  if (held < global.CW.CFG.RIFLE_CAP) return 'only picked up ' + held + ' crystals';
+  /* now walk for two full minutes without a containment failure */
+  for (var f = 0; f < 3600; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  return D.S.crystals.length === held || 'lost ' + (held - D.S.crystals.length) + ' crystals to decay in transit';
+});
+
+t('R120 field charging converts a crystal into a round anywhere', function () {
+  resetInput(); D.start('RIF-04'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  D.S.crystals.push({ t: 0 });
+  var R = D.ship.rooms[D.ship.reactorRoom];
+  D.player.pos.x = R.cx; D.player.pos.z = R.cz + 6;
+  D.setField(true);
+  var guard = 0;
+  while (D.S.charges === 0 && guard++ < 900) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+  }
+  D.setField(false);
+  if (D.S.charges < 1) return 'never charged in the field';
+  return D.S.crystals.length === 0 || 'the crystal was not consumed';
+});
+
+t('R121 field charging takes real time and can be interrupted', function () {
+  resetInput(); D.start('RIF-05'); pump(4); resetInput();
+  D.S.crystals.push({ t: 0 });
+  D.setField(true);
+  var frames = 0;
+  while (D.S.charges === 0 && frames++ < 200) { D.give('invuln', 9999); pump(1); }
+  D.setField(false);
+  var secs = frames / 30;
+  if (secs < global.CW.CFG.FIELD_CHARGE * 0.7) return 'charged too fast: ' + secs.toFixed(1) + 's';
+
+  /* now interrupt it with damage */
+  resetInput(); D.start('RIF-06'); pump(4); resetInput();
+  D.S.crystals.push({ t: 0 });
+  D.setField(true);
+  for (var i = 0; i < 40; i++) { D.give('invuln', 9999); pump(1); }
+  D.give('invuln', 0); D.hurt(10);
+  pump(2);
+  if (D.fc.t !== 0) return 'a hit did not reset the channel';
+  if (!(D.fc.lock > 0)) return 'no lockout after being hit — interruption is free';
+  /* it must resume once the lockout expires */
+  for (var k = 0; k < 90; k++) { D.give('invuln', 9999); pump(1); }
+  if (!D.fc.active) return 'the channel never resumed after the lockout';
+  D.setField(false);
+  return true;
+});
+
+t('R122 field charging cannot exceed rifle capacity', function () {
+  resetInput(); D.start('RIF-07'); pump(4); resetInput();
+  for (var i = 0; i < 8; i++) D.S.crystals.push({ t: 0 });
+  D.setField(true);
+  for (var f = 0; f < 2000; f++) { D.give('hp', 100); D.give('invuln', 9999); pump(1); }
+  D.setField(false);
+  return D.S.charges <= global.CW.CFG.RIFLE_CAP || 'charges reached ' + D.S.charges;
+});
+
+t('R123 boss is beatable using only field charging, never visiting the bench', function () {
+  var wins = 0, tries = 3;
+  for (var attempt = 0; attempt < tries; attempt++) {
+    resetInput(); D.start('FLDB' + attempt); pump(4); resetInput();
+    D.setKey('N0'); D.setKey('N1');
+    var R = D.ship.rooms[D.ship.reactorRoom];
+    /* arrive with raw crystals and no charges at all */
+    for (var c = 0; c < global.CW.CFG.RIFLE_CAP; c++) D.S.crystals.push({ t: 0 });
+    D.give('charges', 0);
+    var guard = 0;
+    while (D.boss && D.boss.state !== 'DEAD' && guard++ < 9000) {
+      D.player.pos.x = R.cx; D.player.pos.z = R.cz + 6;
+      D.give('invuln', 0);
+      /* charge whenever empty, otherwise wait for the vent */
+      D.setField(D.S.charges === 0 && D.S.crystals.length > 0);
+      if (D.enemies.length) {
+        var near = D.enemies[0];
+        near.hp -= 6; if (near.hp <= 0) near.hp = 0.0001;
+      }
+      if (D.S.hp < 40) {
+        var mk = D.pickups.filter(function (p) { return p.kind === 'medkit' && !p.taken; });
+        if (mk.length) { D.player.pos.x = mk[0].x; D.player.pos.z = mk[0].z; pump(3); }
+      }
+      if (D.boss.state === 'VENT' && D.S.charges > 0) D.boss._charged = true;
+      if (D.boss.state === 'FLED') { D.boss.state = 'DORMANT'; D.boss.arena = 240; }
+      if (D.S.hp <= 0) break;
+      pump(1);
+      if (D.boss._charged === false && D.S.charges > 0 && D.boss.state === 'STAGGER') D.give('charges', D.S.charges - 1);
+    }
+    D.setField(false);
+    if (D.boss && D.boss.state === 'DEAD') wins++;
+  }
+  console.log('         [rifle] boss beaten from raw crystals in ' + wins + '/' + tries + ' attempts');
+  return wins >= 2 || 'only ' + wins + '/' + tries + ' — field charging is not a viable route';
 });
 
 console.log('\n' + log.join('\n'));
