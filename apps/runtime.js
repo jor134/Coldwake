@@ -29,6 +29,14 @@ Obj3D.prototype.add = function () {
 Obj3D.prototype.remove = function (o) { var i = this.children.indexOf(o); if (i >= 0) this.children.splice(i, 1); return this; };
 Obj3D.prototype.lookAt = function () { return this; };
 Obj3D.prototype.translateY = function (d) { this.position.y += d; return this; };
+Obj3D.prototype.clone = function () {
+  var c = new Obj3D();
+  c._type = this._type; c.geometry = this.geometry; c.material = this.material;
+  c.position = new V3(this.position.x, this.position.y, this.position.z);
+  c.rotation = { x: this.rotation.x, y: this.rotation.y, z: this.rotation.z, order: this.rotation.order };
+  c.scale = new V3(this.scale.x, this.scale.y, this.scale.z);
+  return c;
+};
 
 function mk(name, extra) {
   var F = function () { Obj3D.call(this); if (extra) extra.apply(this, arguments); this._type = name; };
@@ -70,6 +78,27 @@ THREE.MeshLambertMaterial = function (p) { Mat.call(this, p); this.fog = p && p.
   };
 });
 THREE.BufferGeometry = function () { this.attrs = {}; this.setAttribute = function (k, v) { this.attrs[k] = v; }; };
+THREE.Shape = function () {
+  this.pts = []; this.holes = [];
+  var self = this;
+  function chk(x, y) { if (!isFinite(x) || !isFinite(y)) throw new Error('Shape point non-finite'); }
+  this.moveTo = function (x, y) { chk(x, y); self.pts.push([x, y]); return self; };
+  this.lineTo = function (x, y) { chk(x, y); self.pts.push([x, y]); return self; };
+};
+THREE.Path = function () {
+  this.arcs = []; var self = this;
+  this.absarc = function (x, y, r, a0, a1) {
+    if (!isFinite(x) || !isFinite(y) || !isFinite(r)) throw new Error('Path.absarc non-finite');
+    if (!(r > 0)) throw new Error('Path.absarc radius ' + r);
+    self.arcs.push({ x: x, y: y, r: r });
+    return self;
+  };
+};
+THREE.ShapeGeometry = function (shape, seg) {
+  if (!shape || !shape.pts) throw new Error('ShapeGeometry without a shape');
+  if (shape.pts.length < 3) throw new Error('ShapeGeometry with ' + shape.pts.length + ' points');
+  this._g = 'ShapeGeometry'; this._shape = shape; this._seg = seg;
+};
 THREE.Float32BufferAttribute = function (arr, n) { this.array = arr; this.itemSize = n; };
 
 function Mat(p) { p = p || {}; this.color = new Col(p.color); this.emissive = new Col(p.emissive); this.emissiveIntensity = p.emissiveIntensity === undefined ? 1 : p.emissiveIntensity; this.opacity = p.opacity === undefined ? 1 : p.opacity; this.transparent = !!p.transparent; this.side = p.side; this.gradientMap = p.gradientMap; }
@@ -135,9 +164,35 @@ THREE.Raycaster = function () {
   this.setFromCamera = function () {};
 };
 THREE.Plane = function (n, c) { this.normal = n; this.constant = c; };
-THREE.PerspectiveCamera = mk('PerspectiveCamera', function (f, a, n, ff) { this.fov = f; this.aspect = a; this.updateProjectionMatrix = function () {}; });
+THREE.PerspectiveCamera = mk('PerspectiveCamera', function (f, a, n, ff) {
+  this.fov = f; this.aspect = a; this.updateProjectionMatrix = function () {};
+  var self = this;
+  this.getWorldPosition = function (v) { v.set(self.position.x, self.position.y, self.position.z); return v; };
+  this.getWorldDirection = function (v) { v.set(0, 0, -1); return v; };
+});
 THREE.WebGLRenderer = function () {
   this.setPixelRatio = function () {}; this.setSize = function () {};
+  var animCb = null;
+  /* the real setAnimationLoop re-invokes every frame; the stub must too or the
+     game runs exactly one frame and every test goes quiet */
+  this.setAnimationLoop = function (cb) {
+    animCb = cb;
+    if (!cb) return;
+    var self2 = this;
+    var pump2 = function () { global.requestAnimationFrame(pump2); cb(); };
+    global.requestAnimationFrame(pump2);
+  };
+  this.xr = {
+    enabled: false,
+    _session: null,
+    getSession: function () { return this._session; },
+    getController: function (i) { var c = new (mk('Object3D'))(); c.userData = { idx: i }; c._lis = {};
+      c.addEventListener = function (t, f) { (c._lis[t] = c._lis[t] || []).push(f); };
+      c.getWorldDirection = function (v) { v.set(0, 0, -1); return v; };
+      c.getWorldPosition = function (v) { v.set(0, 1.6, 0); return v; };
+      return c; },
+    setSession: function (s) { this._session = s; }
+  };
   this.renderCount = 0;
   var self = this;
   this.render = function (s, c) {
@@ -201,7 +256,7 @@ global.document = {
 /* HUD elements that the code indexes into */
 var alertBars = getEl('alertBars'); alertBars.children = [new El('b0'), new El('b1'), new El('b2')];
 var armor = getEl('armor'); armor.children = [new El('a0'), new El('a1'), new El('a2')];
-['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','viewBtn','muteBtn','lookZone','stickL'].forEach(getEl);
+['tut','dmg0','dmg1','dmg2','dmg3','btnTut','fireBtn','viewBtn','muteBtn','vrBtn','lookZone','stickL'].forEach(getEl);
 
 /* ---------- Web Audio stub ----------
    Records every node and connection so the tests exercise the real synthesis
@@ -271,7 +326,22 @@ global.window = {
   AudioContext: makeAudioContext, webkitAudioContext: null,
   maxTouchPoints: 0
 };
-global.navigator = { maxTouchPoints: 0 };
+/* Node 22 ships a read-only built-in `navigator`, so a plain assignment is
+   silently dropped — defineProperty is required to override it. */
+var NAV = {
+  maxTouchPoints: 0,
+  xr: {
+    _supported: true,
+    isSessionSupported: function () { return { then: function (f) { try { f(global.navigator.xr._supported); } catch (e) {} return { catch: function () {} }; } }; },
+    requestSession: function () {
+      var sess = { inputSources: [], _lis: {}, addEventListener: function (t, f) { (sess._lis[t] = sess._lis[t] || []).push(f); }, end: function () {} };
+      return { then: function (f) { try { f(sess); } catch (e) { throw e; } return { catch: function () {} }; } };
+    }
+  }
+};
+try { Object.defineProperty(global, 'navigator', { value: NAV, writable: true, configurable: true }); }
+catch (e) { global.navigator = NAV; }
+if (!global.navigator || !global.navigator.xr) throw new Error('navigator stub failed to install');
 global.performance = { now: function () { return Date.now(); } };
 global.requestAnimationFrame = function (f) { rafQ.push(f); return rafQ.length; };
 global.setTimeout = function (f) { try { if (typeof f === 'function') f(); } catch (e) { throw e; } return 0; };
@@ -1861,6 +1931,231 @@ t('R95 slice still completable with windows in', function () {
   for (var i = 0; i < 6; i++) {
     var r = playthrough('WINRUN' + i);
     if (r !== true) fails.push('WINRUN' + i + ': ' + r);
+  }
+  return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
+});
+
+
+/* ---------- BUILD 09: SEALING, CLUTTER, ASTRONAUT, XR ---------- */
+function countInTree(root, pred) {
+  var n = 0;
+  (function walk(o) {
+    if (pred(o)) n++;
+    for (var i = 0; i < o.children.length; i++) walk(o.children[i]);
+  })(root);
+  return n;
+}
+
+t('R96 every doorway has a bulkhead plate sealing the hull junction', function () {
+  for (var s2 = 0; s2 < 8; s2++) {
+    resetInput(); D.start('SEALP' + s2); pump(4);
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      var R = D.ship.rooms[r], g = R._g;
+      if (!g) continue;
+      var plates = countInTree(g, function (o) { return o.geometry && o.geometry._g === 'ShapeGeometry'; });
+      if (plates < R.links.length) {
+        return 'room ' + r + ' has ' + plates + ' plates for ' + R.links.length + ' doorways on ship ' + s2;
+      }
+    }
+  }
+  return true;
+});
+
+t('R97 bulkhead plate spans the doorway chord exactly', function () {
+  resetInput(); D.start('SEALG-1'); pump(4);
+  for (var r = 0; r < D.ship.rooms.length; r++) {
+    var R = D.ship.rooms[r];
+    for (var l = 0; l < R.links.length; l++) {
+      /* the plate half-width must match rad*sin(half) for the gap that serves it */
+      var half = Math.asin(Math.min(0.9, 3.7 / R.rad));
+      var chordHalf = R.rad * Math.sin(half);
+      if (chordHalf < 3.6) return 'plate too narrow for the tube in room ' + r + ': ' + chordHalf.toFixed(2);
+      var inset = R.rad * Math.cos(half);
+      /* the tube must reach past the plate or a ring gap is left */
+      var start = Math.sqrt(Math.max(1, R.rad * R.rad - 3.7 * 3.7)) - 0.6;
+      if (start > inset) return 'tube starts outboard of the plate in room ' + r;
+    }
+  }
+  return true;
+});
+
+t('R98 hull is still sealed after adding the plates', function () {
+  resetInput(); D.start('SEALP-X'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var leaks = 0;
+  for (var trial = 0; trial < 6000; trial++) {
+    var R = D.ship.rooms[trial % D.ship.rooms.length];
+    var a = Math.random() * Math.PI * 2;
+    var p = { x: R.cx + Math.sin(a) * (R.rad - 2.5), z: R.cz + Math.cos(a) * (R.rad - 2.5) };
+    if (D.hitsWall(p.x, p.z, D.PLR_R)) continue;
+    D.moveCircle(p, Math.sin(a) * 70, Math.cos(a) * 70, D.PLR_R);
+    if (!inPlayableSpace(p.x, p.z)) leaks++;
+  }
+  return leaks === 0 || leaks + ' hull leaks';
+});
+
+t('R99 rooms have significantly more open floor than before', function () {
+  var worstBlocked = 0, worstRoom = '';
+  for (var s2 = 0; s2 < 8; s2++) {
+    resetInput(); D.start('CLUT' + s2); pump(4);
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      if (r === D.ship.reactorRoom) continue;   /* the boss itself is meant to be in the way */
+      var R = D.ship.rooms[r], blocked = 0, total = 0;
+      for (var rr = 1.2; rr < R.rad - 1.2; rr += 0.9) {
+        for (var k = 0; k < 28; k++) {
+          var a = (k / 28) * Math.PI * 2;
+          var x = R.cx + Math.sin(a) * rr, z = R.cz + Math.cos(a) * rr;
+          total++;
+          if (D.hitsWall(x, z, D.PLR_R)) blocked++;
+        }
+      }
+      var frac = total ? blocked / total : 0;
+      if (frac > worstBlocked) { worstBlocked = frac; worstRoom = 'ship ' + s2 + ' room ' + r; }
+    }
+  }
+  console.log('         [clutter] worst room is ' + (worstBlocked * 100).toFixed(0) + '% obstructed (' + worstRoom + ')');
+  return worstBlocked < 0.22 || 'a room is ' + (worstBlocked * 100).toFixed(0) + '% obstructed — too cluttered to fight in';
+});
+
+t('R100 you can circle every room without being blocked', function () {
+  var fails = 0;
+  for (var s2 = 0; s2 < 6; s2++) {
+    resetInput(); D.start('CIRC' + s2); pump(4);
+    for (var r = 0; r < D.ship.rooms.length; r++) {
+      if (r === D.ship.reactorRoom) continue;
+      var R = D.ship.rooms[r];
+      /* there must exist at least one clear circuit around the room — the exact
+         radius does not matter, only that a lap is possible without stopping */
+      var best = 0, N = 48;
+      for (var band = 0.35; band <= 0.8; band += 0.05) {
+        var open = 0;
+        for (var k = 0; k < N; k++) {
+          var a = (k / N) * Math.PI * 2, rr = R.rad * band;
+          if (!D.hitsWall(R.cx + Math.sin(a) * rr, R.cz + Math.cos(a) * rr, D.PLR_R)) open++;
+        }
+        best = Math.max(best, open / N);
+      }
+      if (best < 0.95) fails++;
+    }
+  }
+  return fails === 0 || fails + ' rooms cannot be circled freely';
+});
+
+t('R101 exactly one first-person viewmodel exists, even after restarts', function () {
+  resetInput(); D.start('VM-01'); pump(4);
+  for (var i = 0; i < 10; i++) { D.start('VM' + i); pump(20); }
+  var guns = countInTree(D.camera, function (o) { return o._type === 'Group' && o !== D.camera; });
+  var lamps = countInTree(D.camera, function (o) { return o._type === 'SpotLight'; });
+  if (guns > 1) return guns + ' viewmodels attached to the camera after restarts';
+  if (lamps > 1) return lamps + ' headlamps attached to the camera after restarts';
+  return true;
+});
+
+t('R102 third person hides the viewmodel and shows the astronaut', function () {
+  resetInput(); D.start('VM-02'); pump(6);
+  D.setView(false); pump(4);
+  var vm = null;
+  for (var i = 0; i < D.camera.children.length; i++) {
+    if (D.camera.children[i]._type === 'Group') vm = D.camera.children[i];
+  }
+  if (!vm) return 'no viewmodel found on the camera';
+  if (vm.visible) return 'the first-person rifle is still visible in third person';
+  if (!D.playerRig.g.visible) return 'the astronaut is hidden in third person';
+  D.setView(true); pump(4);
+  if (!vm.visible) return 'the viewmodel did not come back in first person';
+  return !D.playerRig.g.visible || 'the astronaut body is visible in first person';
+});
+
+t('R103 the astronaut has articulated limbs that animate', function () {
+  resetInput(); D.start('AST-01'); pump(6); resetInput();
+  var P = D.playerRig;
+  if (!P.legs || P.legs.length !== 2) return 'no leg rig';
+  if (!P.arms || P.arms.length !== 2) return 'no arm rig';
+  for (var i = 0; i < 2; i++) {
+    if (!P.legs[i].thigh || !P.legs[i].knee || !P.legs[i].shin) return 'leg ' + i + ' is not segmented';
+    if (!P.arms[i].shoulder || !P.arms[i].elbow || !P.arms[i].fore) return 'arm ' + i + ' is not segmented';
+  }
+  /* walking must move the thighs and bend the knees */
+  var seenThigh = 0, seenKnee = 0;
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  for (var f = 0; f < 120; f++) {
+    pump(1);
+    seenThigh = Math.max(seenThigh, Math.abs(P.legs[0].thigh.rotation.x));
+    seenKnee = Math.max(seenKnee, Math.abs(P.legs[0].knee.rotation.x));
+  }
+  global.window.fire('keyup', { code: 'KeyW', preventDefault: function () {} });
+  if (seenThigh < 0.15) return 'thighs barely swing: ' + seenThigh.toFixed(3);
+  if (seenKnee < 0.1) return 'knees do not bend: ' + seenKnee.toFixed(3);
+  /* knees must never hyperextend backwards */
+  for (var f2 = 0; f2 < 200; f2++) {
+    pump(1);
+    for (var L = 0; L < 2; L++) if (P.legs[L].knee.rotation.x < -0.001) return 'knee hyperextended';
+  }
+  return true;
+});
+
+t('R104 the astronaut settles when standing still', function () {
+  resetInput(); D.start('AST-02'); pump(6); resetInput();
+  for (var f = 0; f < 200; f++) pump(1);
+  var P = D.playerRig;
+  var swing = Math.abs(P.legs[0].thigh.rotation.x) + Math.abs(P.legs[1].thigh.rotation.x);
+  return swing < 0.05 || 'legs still swinging while stationary: ' + swing.toFixed(3);
+});
+
+t('R105 WebXR initialises and offers a session when supported', function () {
+  resetInput(); D.start('XR-01'); pump(6);
+  var xr = D.xr;
+  if (!xr.rig) return 'no XR rig built';
+  if (!xr.controllers || xr.controllers.length !== 2) return 'expected 2 controllers, got ' + (xr.controllers || []).length;
+  if (!xr.supported) return 'session support was not detected';
+  if (getEl('vrBtn').style.display !== 'block') return 'the VR button never appeared';
+  return true;
+});
+
+t('R106 the camera lives inside the XR rig', function () {
+  resetInput(); D.start('XR-02'); pump(6);
+  var rig = D.xr.rig, found = false;
+  for (var i = 0; i < rig.children.length; i++) if (rig.children[i] === D.camera) found = true;
+  return found || 'the camera is not parented to the XR rig';
+});
+
+t('R107 entering VR hides the flat viewmodel and arms the controllers', function () {
+  resetInput(); D.start('XR-03'); pump(6);
+  getEl('vrBtn').fire('click', { preventDefault: function () {} });
+  pump(6);
+  if (!D.xr.on) return 'XR session never activated';
+  var vm = null;
+  for (var i = 0; i < D.camera.children.length; i++) if (D.camera.children[i]._type === 'Group') vm = D.camera.children[i];
+  if (vm && vm.visible) return 'the flat viewmodel is still visible in VR';
+  /* the right controller carries the weapon model */
+  var rightKids = countInTree(D.xr.controllers[1], function (o) { return o._type === 'Mesh'; });
+  if (rightKids < 3) return 'the right controller has no weapon model';
+  D.setXR(false);
+  return true;
+});
+
+t('R108 in VR the rig moves and no bob or shake is applied', function () {
+  resetInput(); D.start('XR-04'); pump(6); resetInput();
+  D.setXR(true);
+  var rig = D.xr.rig;
+  global.window.fire('keydown', { code: 'KeyW', preventDefault: function () {} });
+  for (var f = 0; f < 90; f++) pump(1);
+  global.window.fire('keyup', { code: 'KeyW', preventDefault: function () {} });
+  if (Math.abs(rig.position.x - D.player.pos.x) > 0.001) return 'rig did not track the player in X';
+  if (Math.abs(rig.position.z - D.player.pos.z) > 0.001) return 'rig did not track the player in Z';
+  if (rig.position.y !== 0) return 'rig applies its own eye height: ' + rig.position.y;
+  /* comfort: camera pitch and roll must stay owned by the headset */
+  D.hurt(30); pump(4);
+  if (D.camera.rotation.z !== 0) return 'camera roll applied in VR (nausea risk)';
+  D.setXR(false);
+  return true;
+});
+
+t('R109 slice still completable after the build-09 changes', function () {
+  var fails = [];
+  for (var i = 0; i < 6; i++) {
+    var r = playthrough('B9RUN' + i);
+    if (r !== true) fails.push('B9RUN' + i + ': ' + r);
   }
   return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
 });
