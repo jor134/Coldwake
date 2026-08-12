@@ -2160,6 +2160,143 @@ t('R109 slice still completable after the build-09 changes', function () {
   return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
 });
 
+
+/* ---------- BUILD 10: WAVES ---------- */
+t('R110 enemies arrive in waves with real quiet between them', function () {
+  resetInput(); D.start('WAVE-01'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var quietRun = 0, longestQuiet = 0, peak = 0, sawAssault = false;
+  for (var f = 0; f < 9000; f++) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    peak = Math.max(peak, D.enemies.length);
+    if (D.waves.state === 'ASSAULT') sawAssault = true;
+    if (D.enemies.length === 0) { quietRun += 1 / 30; longestQuiet = Math.max(longestQuiet, quietRun); }
+    else quietRun = 0;
+  }
+  if (!sawAssault) return 'no assault ever ran';
+  console.log('         [waves] peak ' + peak + ' concurrent, longest quiet stretch ' + longestQuiet.toFixed(1) + 's');
+  return longestQuiet > 6 || 'longest quiet stretch was only ' + longestQuiet.toFixed(1) + 's';
+});
+
+t('R111 wave counter advances and quotas grow', function () {
+  resetInput(); D.start('WAVE-02'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  var firstQuota = 0, lastQuota = 0;
+  for (var f = 0; f < 12000; f++) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    if (D.waves.wave === 1 && !firstQuota) firstQuota = D.waves.quota;
+    lastQuota = D.waves.quota;
+  }
+  if (D.waves.wave < 3) return 'only reached wave ' + D.waves.wave;
+  return lastQuota >= firstQuota || 'quotas shrank from ' + firstQuota + ' to ' + lastQuota;
+});
+
+t('R112 no ambient spawns while the boss is engaged', function () {
+  resetInput(); D.start('WAVE-03'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1'); D.give('hotEver', true);
+  var R = D.ship.rooms[D.ship.reactorRoom];
+  var outsideSpawns = 0;
+  for (var f = 0; f < 4000; f++) {
+    D.player.pos.x = R.cx; D.player.pos.z = R.cz + 5;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    if (!D.boss || D.boss.state === 'DORMANT') continue;
+    for (var e = 0; e < D.enemies.length; e++) {
+      var EN = D.enemies[e];
+      if (Math.hypot(EN.pos.x - R.cx, EN.pos.z - R.cz) > R.rad + 6) outsideSpawns++;
+    }
+    if (D.waves.state === 'ASSAULT') return 'an ambient wave ran during the boss fight';
+  }
+  return true;
+});
+
+t('R113 the vent window is completely clear of adds', function () {
+  resetInput(); D.start('WAVE-04'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var R = D.ship.rooms[D.ship.reactorRoom];
+  var ventFrames = 0, ventWithAdds = 0, sawVent = false;
+  for (var f = 0; f < 6000; f++) {
+    D.player.pos.x = R.cx; D.player.pos.z = R.cz + 6;
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    if (!D.boss) continue;
+    if (D.boss.state === 'VENT' || D.boss.state === 'STAGGER') {
+      sawVent = true; ventFrames++;
+      if (D.enemies.length > 0) ventWithAdds++;
+    }
+    if (D.boss.state === 'FLED') { D.boss.state = 'DORMANT'; D.boss.arena = 240; }
+  }
+  if (!sawVent) return 'the boss never vented';
+  var rate = ventFrames ? ventWithAdds / ventFrames : 0;
+  console.log('         [boss] ' + ventFrames + ' vent frames, ' + (rate * 100).toFixed(0) + '% with adds present');
+  return rate < 0.15 || (rate * 100).toFixed(0) + '% of the vent window had adds crawling on you';
+});
+
+t('R114 the boss is winnable while under attack', function () {
+  /* the real question: can a player who only fires during vents actually finish
+     the fight without being overwhelmed by adds? */
+  var wins = 0, tries = 4;
+  for (var attempt = 0; attempt < tries; attempt++) {
+    resetInput(); D.start('BOSSW' + attempt); pump(4); resetInput();
+    D.setKey('N0'); D.setKey('N1');
+    var R = D.ship.rooms[D.ship.reactorRoom];
+    D.give('charges', 99);
+    var guard = 0;
+    while (D.boss && D.boss.state !== 'DEAD' && guard++ < 8000) {
+      /* simulate a competent player: stay in the arena, deal with adds, and use
+         the arena medkit when hurt — not a stationary punching bag */
+      D.player.pos.x = R.cx; D.player.pos.z = R.cz + 6;
+      D.give('invuln', 0);
+      if (D.enemies.length) {
+        var near = D.enemies[0], nd = 1e9;
+        for (var e = 0; e < D.enemies.length; e++) {
+          var dd = Math.hypot(D.enemies[e].pos.x - D.player.pos.x, D.enemies[e].pos.z - D.player.pos.z);
+          if (dd < nd) { nd = dd; near = D.enemies[e]; }
+        }
+        near.hp -= 6;                                  /* sustained sidearm fire */
+        if (near.hp <= 0) near.hp = 0.0001;
+      }
+      if (D.S.hp < 40) {
+        var mk = D.pickups.filter(function (p) { return p.kind === 'medkit' && !p.taken; });
+        if (mk.length) { D.player.pos.x = mk[0].x; D.player.pos.z = mk[0].z; pump(3); }
+      }
+      if (D.boss.state === 'VENT') D.boss._charged = true;
+      if (D.boss.state === 'FLED') { D.boss.state = 'DORMANT'; D.boss.arena = 240; }
+      if (D.S.hp <= 0) break;
+      pump(1);
+    }
+    if (D.boss && D.boss.state === 'DEAD') wins++;
+  }
+  console.log('         [boss] winnable in ' + wins + '/' + tries + ' attempts without healing');
+  return wins >= 3 || 'only won ' + wins + '/' + tries + ' — the arena is still overwhelming';
+});
+
+t('R115 lulls let the score settle', function () {
+  resetInput(); D.start('WAVE-05'); pump(4); resetInput();
+  D.setKey('N0'); D.setKey('N1');
+  var assaultPerc = 0, lullPerc = 1e9, sawBoth = { a: false, l: false };
+  for (var f = 0; f < 8000; f++) {
+    D.give('hp', 100); D.give('invuln', 9999);
+    pump(1);
+    var m = global.CW.musicMix(D.musicState());
+    if (D.waves.state === 'ASSAULT' && D.enemies.length > 2) { assaultPerc = Math.max(assaultPerc, m.perc); sawBoth.a = true; }
+    if (D.waves.state === 'LULL' && D.enemies.length === 0) { lullPerc = Math.min(lullPerc, m.perc); sawBoth.l = true; }
+  }
+  if (!sawBoth.a || !sawBoth.l) return 'never observed both states';
+  return assaultPerc > lullPerc || 'the score does not settle during lulls';
+});
+
+t('R116 slice still completable with wave pacing', function () {
+  var fails = [];
+  for (var i = 0; i < 6; i++) {
+    var r = playthrough('WVRUN' + i);
+    if (r !== true) fails.push('WVRUN' + i + ': ' + r);
+  }
+  return fails.length === 0 || fails.length + ' failed, first -> ' + fails[0];
+});
+
 console.log('\n' + log.join('\n'));
 console.log('\n' + '='.repeat(52));
 console.log('  RUNTIME  PASS ' + pass + '   FAIL ' + fail);

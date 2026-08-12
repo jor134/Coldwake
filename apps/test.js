@@ -605,6 +605,115 @@ t('11.13 note frequencies are audible and finite', function () {
   return true;
 });
 
+
+/* ============ 12. WAVE DIRECTOR ============ */
+t('12.1 nothing spawns during the tutorial phase', function () {
+  var w = CW.newWaves();
+  for (var i = 0; i < 5000; i++) {
+    CW.waveStep(w, 0.05, { phase: 0, alive: 0 });
+    if (w.spawn) return 'spawned during the tutorial';
+  }
+  return w.state === 'LULL' || 'state ' + w.state;
+});
+t('12.2 waves alternate assault and lull', function () {
+  var w = CW.newWaves(), seen = {}, order = [];
+  var last = w.state;
+  for (var i = 0; i < 20000; i++) {
+    CW.waveStep(w, 0.05, { phase: 2, alive: 0 });
+    seen[w.state] = 1;
+    if (w.state !== last) { order.push(w.state); last = w.state; }
+  }
+  if (!seen.LULL || !seen.BUILD || !seen.ASSAULT) return 'states seen: ' + Object.keys(seen).join(',');
+  return order.length > 4 || 'only ' + order.length + ' transitions in 1000s';
+});
+t('12.3 every wave has a genuine quiet period', function () {
+  var w = CW.newWaves(), quiet = 0, longest = 0, run = 0;
+  for (var i = 0; i < 12000; i++) {
+    CW.waveStep(w, 0.05, { phase: 2, alive: 0 });
+    if (w.state === 'LULL') { quiet++; run += 0.05; longest = Math.max(longest, run); }
+    else run = 0;
+  }
+  if (longest < 8) return 'longest lull only ' + longest.toFixed(1) + 's';
+  var frac = quiet / 12000;
+  return (frac > 0.15 && frac < 0.8) || 'lull fraction ' + frac.toFixed(2);
+});
+t('12.4 a wave sends exactly its quota, no more', function () {
+  var w = CW.newWaves(), spawned = 0, wave = 0;
+  for (var i = 0; i < 6000; i++) {
+    CW.waveStep(w, 0.05, { phase: 2, alive: 99 });   /* alive high so it never ends early */
+    if (w.wave !== wave) { wave = w.wave; spawned = 0; }
+    if (w.spawn) spawned++;
+    if (spawned > w.quota) return 'wave ' + wave + ' sent ' + spawned + ' of a ' + w.quota + ' quota';
+  }
+  return true;
+});
+t('12.5 later waves are bigger, up to a cap', function () {
+  var last = -1;
+  for (var wv = 1; wv <= 20; wv++) {
+    var q = CW.waveQuota(2, wv);
+    if (q < last) return 'wave ' + wv + ' is smaller than the one before';
+    if (q > 18) return 'quota ' + q + ' exceeds the cap';
+    last = q;
+  }
+  return CW.waveQuota(2, 20) > CW.waveQuota(2, 1) || 'waves do not grow';
+});
+t('12.6 higher phases send bigger waves with shorter lulls', function () {
+  for (var p = 2; p <= 3; p++) {
+    if (CW.waveQuota(p, 3) <= CW.waveQuota(p - 1, 3)) return 'phase ' + p + ' quota is not bigger';
+    if (CW.lullTime(p, 3) >= CW.lullTime(p - 1, 3)) return 'phase ' + p + ' lull is not shorter';
+  }
+  return true;
+});
+t('12.7 lulls shorten as waves progress but never vanish', function () {
+  var prev = CW.lullTime(2, 0);
+  for (var wv = 1; wv <= 60; wv++) {
+    var l = CW.lullTime(2, wv);
+    if (l > prev) return 'lull grew at wave ' + wv;
+    if (l < 9) return 'lull collapsed to ' + l;
+    prev = l;
+  }
+  return true;
+});
+t('12.8 a stalled wave times out instead of hanging forever', function () {
+  var w = CW.newWaves(), t2 = 0;
+  /* alive stays high, so the wave can only end on its timeout */
+  while (w.state !== 'ASSAULT' && t2 < 200) { CW.waveStep(w, 0.05, { phase: 2, alive: 99 }); t2 += 0.05; }
+  var start = t2;
+  while (w.state === 'ASSAULT' && t2 < 400) { CW.waveStep(w, 0.05, { phase: 2, alive: 99 }); t2 += 0.05; }
+  var dur = t2 - start;
+  return dur <= CW.assaultTimeout(2) + 1 || 'assault ran ' + dur.toFixed(1) + 's';
+});
+t('12.9 ambient waves stop entirely during the boss encounter', function () {
+  var w = CW.newWaves();
+  for (var i = 0; i < 8000; i++) {
+    CW.waveStep(w, 0.05, { phase: 3, alive: 0, bossActive: true });
+    if (w.spawn) return 'an ambient wave spawned during the boss fight';
+  }
+  return w.state === 'LULL' || 'state ' + w.state;
+});
+t('12.10 no boss adds during the vent or stagger window', function () {
+  if (CW.bossAddAllowed('VENT', 0, 20)) return 'adds allowed during VENT';
+  if (CW.bossAddAllowed('STAGGER', 0, 20)) return 'adds allowed during STAGGER';
+  if (!CW.bossAddAllowed('AGGRESSIVE', 0, 20)) return 'no adds during AGGRESSIVE';
+  return CW.bossAddAllowed('ARMORED', 0, 20) || 'no adds during ARMORED';
+});
+t('12.11 boss adds are hard-capped low so the arena stays fightable', function () {
+  if (CW.bossAddAllowed('AGGRESSIVE', 50, 20)) return 'adds kept coming with 50 alive';
+  if (CW.bossAddAllowed('AGGRESSIVE', 10, 20)) return 'adds kept coming at half the cap';
+  if (CW.bossAddAllowed('AGGRESSIVE', CW.BOSS_ADD_CAP, 20)) return 'the hard cap is not enforced';
+  if (CW.BOSS_ADD_CAP > 4) return 'the arena cap of ' + CW.BOSS_ADD_CAP + ' is too high to fight in';
+  return CW.bossAddAllowed('AGGRESSIVE', 0, 20) || 'no adds at all in the arena';
+});
+t('12.12 no adds once the boss is dead, dormant or fled', function () {
+  var bad = ['DEAD', 'DORMANT', 'FLED'].filter(function (st) { return CW.bossAddAllowed(st, 0, 20); });
+  return bad.length === 0 || 'adds allowed while ' + bad.join(',');
+});
+t('12.13 alert raises wave feed rate but never to zero interval', function () {
+  var slow = CW.waveInterval(2, 0), fast = CW.waveInterval(2, 3);
+  if (!(fast < slow)) return 'alert does not speed up the feed';
+  return fast > 0.2 || 'interval collapsed to ' + fast;
+});
+
 console.log('\n' + log.join('\n'));
 console.log('\n' + '='.repeat(52));
 console.log('  PASS ' + pass + '   FAIL ' + fail + '   TOTAL ' + (pass + fail));
