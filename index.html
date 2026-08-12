@@ -144,7 +144,7 @@ body.xr #hud{display:none}
 
 <div class="screen" id="title">
   <h1>COLDWAKE</h1>
-  <div class="sub">VERTICAL SLICE · BUILD 09</div>
+  <div class="sub">VERTICAL SLICE · BUILD 10</div>
   <p>You wake in a failed cryopod aboard a drifting colony transport. The crew is gone. Something is nesting in the dark. Restore the reactor.</p>
   <p style="font-size:10px;color:#5f7f96;margin-bottom:14px">HEADPHONES RECOMMENDED — THE SCORE REACTS TO WHAT IS HUNTING YOU</p>
   <input id="codeIn" placeholder="SHIP CODE" maxlength="7" autocomplete="off" spellcheck="false">
@@ -655,6 +655,104 @@ CW.noteHz = function (semi, octave) {
   return CW.ROOT * Math.pow(2, (semi + (octave || 0) * 12) / 12);
 };
 
+/* ---------- WAVE DIRECTOR ----------
+   Continuous trickle spawning means there is never a moment to do anything but
+   shoot, which makes the boss unfightable. Enemies now arrive in waves with a
+   real lull between them, and during the boss encounter adds are suppressed
+   entirely while the boss is vulnerable. */
+
+CW.WAVE_STATES = ['LULL', 'BUILD', 'ASSAULT'];
+
+CW.newWaves = function () {
+  return { state: 'LULL', t: 0, wave: 0, quota: 0, spawned: 0, announced: false };
+};
+
+/* how many enemies a given wave sends, by phase */
+CW.waveQuota = function (phase, wave) {
+  if (phase <= 0) return 0;
+  var base = [0, 3, 6, 9][phase] || 0;
+  return Math.min(base + Math.floor(wave * 0.8), [0, 6, 12, 18][phase] || 0);
+};
+
+/* seconds of quiet before the next wave */
+CW.lullTime = function (phase, wave) {
+  var base = [999, 26, 21, 17][phase] || 999;
+  return Math.max(9, base - wave * 0.7);
+};
+
+/* how fast a wave feeds in once it starts */
+CW.waveInterval = function (phase, alert) {
+  var base = [999, 2.4, 1.7, 1.2][phase] || 999;
+  return base / CW.spawnMult(alert || 0);
+};
+
+/* the longest a wave may stay open before the director gives up and calls a lull */
+CW.assaultTimeout = function (phase) { return [999, 42, 38, 34][phase] || 999; };
+
+/* ctx: {phase, alive, alert, bossActive, bossVulnerable} */
+CW.waveStep = function (w, dt, ctx) {
+  ctx = ctx || {};
+  var phase = ctx.phase || 0;
+  w.t += dt;
+  w.spawn = false;
+
+  if (phase <= 0) { w.state = 'LULL'; w.quota = 0; w.spawned = 0; return w; }
+
+  /* the boss owns its own arena: ambient waves stop at the door, and nothing at
+     all spawns while the boss is venting, so the charge-rifle window is clean */
+  if (ctx.bossActive) {
+    w.state = 'LULL';
+    w.t = 0;
+    return w;
+  }
+
+  switch (w.state) {
+    case 'LULL':
+      if (w.t >= CW.lullTime(phase, w.wave)) {
+        w.wave++;
+        w.quota = CW.waveQuota(phase, w.wave);
+        w.spawned = 0;
+        w.state = 'BUILD';
+        w.t = 0;
+        w.announced = true;
+      }
+      break;
+
+    case 'BUILD':
+      /* a short tell between the warning and the first arrival */
+      if (w.t >= 2.2) { w.state = 'ASSAULT'; w.t = 0; w.acc = 0; }
+      break;
+
+    case 'ASSAULT':
+      w.acc = (w.acc || 0) + dt;
+      if (w.spawned < w.quota && w.acc >= CW.waveInterval(phase, ctx.alert)) {
+        w.acc = 0;
+        w.spawned++;
+        w.spawn = true;
+      }
+      /* the wave is over once everything has been sent and mostly dealt with,
+         or once it has simply run too long */
+      if ((w.spawned >= w.quota && (ctx.alive || 0) <= Math.max(1, Math.floor(w.quota * 0.25))) ||
+          w.t >= CW.assaultTimeout(phase)) {
+        w.state = 'LULL';
+        w.t = 0;
+        w.announced = false;
+      }
+      break;
+  }
+  return w;
+};
+
+/* boss adds: never while it is vulnerable, and capped hard */
+CW.BOSS_ADD_CAP = 3;
+CW.bossAddAllowed = function (bossState, alive, cap) {
+  if (bossState === 'VENT' || bossState === 'STAGGER') return false;
+  if (bossState === 'DEAD' || bossState === 'DORMANT' || bossState === 'FLED') return false;
+  /* a hard low cap, not a fraction of the global one: the arena is about the
+     boss, and a swarm there makes the vent window impossible to use */
+  return alive < Math.min(CW.BOSS_ADD_CAP, Math.max(2, Math.floor((cap || 8) * 0.5)));
+};
+
 CW.BOSS_STATES = ['DORMANT', 'AGGRESSIVE', 'ARMORED', 'VENT', 'STAGGER', 'DEAD', 'FLED'];
 
 CW.newBoss = function (cfg) {
@@ -1088,6 +1186,15 @@ var SFX = {
   },
   heal: function () { blip(520, 0.13, 'sine', 0.13, 780); setTimeout(function () { blip(780, 0.3, 'sine', 0.13, 1060); }, 110); },
   ping: function () { blip(1080, 0.09, 'sine', 0.1, 1500); },
+  waveIn: function () {
+    blip(180, 0.5, 'sawtooth', 0.2, 90);
+    setTimeout(function () { blip(240, 0.5, 'sawtooth', 0.18, 120); }, 220);
+    noise(0.6, 0.12, 300, 0.8);
+  },
+  waveClear: function () {
+    blip(560, 0.3, 'sine', 0.14, 840);
+    setTimeout(function () { blip(840, 0.45, 'sine', 0.12, 1120); }, 150);
+  },
   wake: function () { blip(42, 1.8, 'sawtooth', 0.3, 21); noise(1.4, 0.22, 140); musicSting('phase'); },
   breakit: function () { noise(0.3, 0.22, 1400, 1.1); blip(280, 0.22, 'square', 0.11, 80); },
   power: function () { [0, 160, 320, 520].forEach(function (d, i) { setTimeout(function () { blip(220 * (i + 1), 0.4, 'sine', 0.15, 330 * (i + 1)); }, d); }); }
@@ -3448,17 +3555,39 @@ function spawnTick(dt) {
     if (up && phase === 2) { SFX.wake(); toast('THE HIVE IS AWAKE — MOVEMENT ON EVERY DECK'); }
     if (up && phase === 3) { SFX.wake(); toast('THEY CAN SMELL THE VOIDGLASS. THEY ARE FLOODING IN.'); }
   }
+  if (!S.waves) S.waves = CW.newWaves();
+
+  var bossActive = !!(boss && S.room === ship.reactorRoom &&
+                      boss.state !== 'DORMANT' && boss.state !== 'DEAD');
+  var prevState = S.waves.state, prevWave = S.waves.wave;
+
+  CW.waveStep(S.waves, dt, {
+    phase: phase,
+    alive: enemies.length,
+    alert: S.alert,
+    bossActive: bossActive
+  });
+
+  /* announce a wave the moment it is called, so the lull reads as earned rest */
+  if (S.waves.wave !== prevWave && S.waves.state === 'BUILD') {
+    SFX.waveIn();
+    toast('WAVE ' + S.waves.wave + ' INBOUND — ' + S.waves.quota + ' CONTACTS');
+  }
+  if (prevState === 'ASSAULT' && S.waves.state === 'LULL') {
+    SFX.waveClear();
+    if (!bossActive) toast('WAVE CLEAR');
+  }
+
+  if (!S.waves.spawn) return;
   var cap = Math.min(ENEMY_CAP, CW.enemyCap(phase));
-  if (enemies.length >= cap) { S.spawnT = Math.max(S.spawnT, 0.6); return; }
-  var iv = CW.spawnInterval(phase, S.alert, S.elapsed);
-  if (!isFinite(iv)) { S.spawnT = 1; return; }
-  S.spawnT -= dt;
-  if (S.spawnT > 0) return;
-  S.spawnT = iv * (0.75 + Math.random() * 0.5);
+  if (enemies.length >= cap) return;
+
   var pool = ship.pvs[S.room] || [S.room], cand = [];
   for (var i = 0; i < pool.length; i++) {
     var R = ship.rooms[pool[i]];
     if (!R || !R.vpos) continue;
+    /* never feed the arena from outside — the boss handles its own adds */
+    if (bossActive && pool[i] === ship.reactorRoom) continue;
     for (var v = 0; v < R.vpos.length; v++) {
       var d = Math.hypot(R.vpos[v].x - player.pos.x, R.vpos[v].z - player.pos.z);
       if (d > 8 && d < 58) cand.push(R.vpos[v]);
@@ -3774,7 +3903,8 @@ function musicState() {
     boss: !!inArena,
     bossVent: !!(inArena && (boss.state === 'VENT' || boss.state === 'STAGGER')),
     hurt: Math.max(0, 1 - S.hp / (CFG.PLAYER_HP * 0.45)),
-    safe: S.room === 0 && S.phase === 0
+    safe: (S.room === 0 && S.phase === 0) ||
+          (S.waves && S.waves.state === 'LULL' && !inArena && enemies.length === 0)
   };
 }
 
@@ -3831,12 +3961,26 @@ function updateBoss(dt) {
     noise(0.32, 0.18, 360);
   }
   if (boss._add <= 0) {
-    boss._add = 3.4;
+    boss._add = 4.2;
     var R2 = ship.rooms[ship.reactorRoom];
-    if (R2.vpos && R2.vpos.length && enemies.length < Math.min(ENEMY_CAP, CW.enemyCap(S.phase)) - 2) {
+    var cap2 = Math.min(ENEMY_CAP, CW.enemyCap(S.phase));
+    /* nothing spawns while the boss is vulnerable — that window has to be clean
+       or the encounter is unwinnable */
+    if (R2.vpos && R2.vpos.length && CW.bossAddAllowed(boss.state, enemies.length, cap2)) {
       var v = R2.vpos[Math.floor(Math.random() * R2.vpos.length)];
       spawnEnemy('skitter', v.x, v.z);
     }
+  }
+  /* entering the vent window clears the floor so you can line up the shot */
+  if (was !== 'VENT' && boss.state === 'VENT') {
+    for (var ce = enemies.length - 1; ce >= 0; ce--) {
+      var EC = enemies[ce];
+      if (Math.hypot(EC.pos.x - bossMesh.x, EC.pos.z - bossMesh.z) < 30) {
+        for (var pz2 = 0; pz2 < 6; pz2++) burst(EC.pos.x, EC.T.hy, EC.pos.z, 0x9fd83a);
+        world.remove(EC.g); enemies.splice(ce, 1);
+      }
+    }
+    noise(0.5, 0.16, 700, 1.2);
   }
 }
 
@@ -3916,8 +4060,14 @@ function updateHUD() {
   $('alert').style.color = S.alert >= 2 ? '#ff8a4a' : '#5f7f96';
 
   var R = ship.rooms[S.room];
+  var wv = S.waves || { state: 'LULL', wave: 0 };
+  var wtxt = S.phase === 0 ? 'DORMANT'
+    : wv.state === 'LULL' ? 'CLEAR'
+    : wv.state === 'BUILD' ? 'WAVE ' + wv.wave + ' INBOUND'
+    : 'WAVE ' + wv.wave + '  ' + Math.max(0, wv.quota - wv.spawned) + ' LEFT';
   $('sector').textContent = (R ? (CW.SECTORS[R.role] || CW.SECTORS.SPINE).name.toUpperCase() : '') +
-    '   ·   HIVE ' + CW.PHASE_NAMES[S.phase];
+    '   ·   ' + wtxt;
+  $('sector').style.color = wv.state === 'ASSAULT' ? '#ff8a4a' : (wv.state === 'BUILD' ? '#ffd08a' : '#4f6c82');
   $('obj').textContent = objective();
 
   /* crosshair turns hostile when something is under it */
@@ -4071,7 +4221,7 @@ function startGame(code) {
     hp: CFG.PLAYER_HP, o2: CFG.O2_MAX, scrap: 0, mesh: 0, crystals: [], charges: 0,
     keys: {}, wep: 0, alert: 0, room: 0, invuln: 0, shake: 0, bob: 0, charging: 0, cool: 0,
     spawnT: 2, part: false, powerT1: false, yaw: 0, pitch: 0, recoil: 0, kick: 0,
-    elapsed: 0, phase: 0, hotEver: false, tut: 0, tutOn: tutorialEnabled,
+    elapsed: 0, phase: 0, hotEver: false, waves: CW.newWaves(), waveMsg: 0, tut: 0, tutOn: tutorialEnabled,
     tutMove: 0, tutLook: 0, tutShots: 0, chitter: 0
   };
   dmgMarks = [];
@@ -4179,7 +4329,8 @@ window.__CW = {
   windowsOf: function (r) { return windowGaps(ship.rooms[r]); },
   get xr() { return { on: xrOn, rig: xrRig, controllers: xrCtrl, supported: xrSupported }; },
   setXR: function (v) { xrOn = v; },
-  get playerRig() { return player; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
+  get playerRig() { return player; },
+  get waves() { return S.waves; }, get tutStep() { return S.tut; }, get tutLen() { return TUT.length; },
   hitsWall: hitsWall, moveCircle: moveCircle, resolve: resolve, rayWorld: rayWorld, PLR_R: PLR_R,
   start: function (c) { startGame(c); }, hurt: function (d) { hurtPlayer(d); },
   give: function (k, n) { S[k] = n; }, setKey: function (k) { S.keys[k] = true; openDoors(); },
